@@ -14,20 +14,20 @@ every outbound request before forwarding it to the real `https://opencode.ai/zen
 
 ## Headers sent upstream (per inference call)
 
-| Header | Value | Notes |
-|---|---|---|
-| `User-Agent` | `opencode/1.18.31 (linux amd64; go1.24.13)` | hardcoded to impersonate the OpenCode CLI |
-| `x-opencode-client` | `cli` | constant |
-| `x-opencode-session` | `ses_364fd5fcbffe1vIMsrgVFkcTt7` | stable across the 10 calls |
-| `x-opencode-request` | `req_e9ccdc14…` | unique per call (10/10 distinct) |
-| `x-opencode-project` | `prj_6ab5f8f61e12fda7f7add161` | constant |
-| `x-session-affinity` | `ses_364fd5fcbffe1vIMsrgVFkcTt7` | same as session (OpenCode 1.18.x affinity) |
-| `x-session-id` | `ses_364fd5fcbffe1vIMsrgVFkcTt7` | same as session (legacy alias) |
-| `Authorization` | `Bearer public` | anonymous lane credential |
-| `Content-Type` | `application/json` | |
-| `Accept` | `application/json, text/event-stream` | |
-| `Accept-Encoding` | `gzip` | added by Go transport |
-| `Content-Length` | `695` | |
+| Header               | Value                                       | Notes                                      |
+| -------------------- | ------------------------------------------- | ------------------------------------------ |
+| `User-Agent`         | `opencode/1.18.31 (linux amd64; go1.24.13)` | hardcoded to impersonate the OpenCode CLI  |
+| `x-opencode-client`  | `cli`                                       | constant                                   |
+| `x-opencode-session` | `ses_364fd5fcbffe1vIMsrgVFkcTt7`            | stable across the 10 calls                 |
+| `x-opencode-request` | `req_e9ccdc14…`                             | unique per call (10/10 distinct)           |
+| `x-opencode-project` | `prj_6ab5f8f61e12fda7f7add161`              | constant                                   |
+| `x-session-affinity` | `ses_364fd5fcbffe1vIMsrgVFkcTt7`            | same as session (OpenCode 1.18.x affinity) |
+| `x-session-id`       | `ses_364fd5fcbffe1vIMsrgVFkcTt7`            | same as session (legacy alias)             |
+| `Authorization`      | `Bearer public`                             | anonymous lane credential                  |
+| `Content-Type`       | `application/json`                          |                                            |
+| `Accept`             | `application/json, text/event-stream`       |                                            |
+| `Accept-Encoding`    | `gzip`                                      | added by Go transport                      |
+| `Content-Length`     | `695`                                       |                                            |
 
 Raw JSON of one captured call is in `capture-headers.jsonl`.
 

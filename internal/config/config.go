@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -64,6 +65,11 @@ type RetryConfig struct {
 type ModelsConfig struct {
 	RefreshSeconds int               `json:"refresh_seconds"`
 	Protocols      map[string]string `json:"protocols"`
+	// Aliases maps a client-facing model name to the real upstream model ID it
+	// is served by. A client may address the target under either name; the
+	// response always reports the name the client used, so a client that pins a
+	// model name in its own configuration keeps seeing that name.
+	Aliases map[string]string `json:"aliases,omitempty"`
 }
 
 type LoggingConfig struct {
@@ -246,10 +252,77 @@ func Normalize(path string, cfg Config) (Config, error) {
 			return Config{}, fmt.Errorf("models.protocols contains invalid mapping %q: %q", model, protocol)
 		}
 	}
+	if err := normalizeModelAliases(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := normalizeReasoning(&cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// modelNamePattern accepts the identifiers a client can put in a "model" field.
+// Aliases are operator-chosen, so the rule is deliberately narrow enough to
+// reject whitespace and control characters while still allowing the dots,
+// dashes, colons and slashes real model IDs use.
+var modelNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)
+
+// normalizeModelAliases validates models.aliases and drops the empty map so a
+// configuration the operator never used it in stays free of the field.
+//
+// Two rules keep resolution unambiguous: an alias may not point at itself, and
+// it may not point at another alias. Without the second rule the resolution
+// order of a chain would depend on map iteration, and a request could resolve
+// to a model the operator never named.
+func normalizeModelAliases(cfg *Config) error {
+	if len(cfg.Models.Aliases) == 0 {
+		cfg.Models.Aliases = nil
+		return nil
+	}
+	normalized := make(map[string]string, len(cfg.Models.Aliases))
+	for alias, target := range cfg.Models.Aliases {
+		key := strings.TrimSpace(alias)
+		value := strings.TrimSpace(target)
+		if !modelNamePattern.MatchString(key) {
+			return fmt.Errorf("models.aliases contains an invalid alias %q: aliases must be 1-128 characters of letters, digits, dot, dash, underscore, colon or slash", alias)
+		}
+		if !modelNamePattern.MatchString(value) {
+			return fmt.Errorf("models.aliases[%q] has an invalid target %q: targets must be 1-128 characters of letters, digits, dot, dash, underscore, colon or slash", key, target)
+		}
+		if key == value {
+			return fmt.Errorf("models.aliases[%q] maps a model to itself", key)
+		}
+		if key == cfg.Rotation.SOTA.Alias || key == cfg.Rotation.Sweet.Alias {
+			return fmt.Errorf("models.aliases[%q] collides with a rotation group alias", key)
+		}
+		normalized[key] = value
+	}
+	// A target that is itself an alias would make resolution order depend on map
+	// iteration, and a target that is a rotation group alias would silently
+	// bypass the group. Reject both instead of guessing an order.
+	for alias, target := range normalized {
+		if _, chained := normalized[target]; chained {
+			return fmt.Errorf("models.aliases[%q] points at another alias %q; map it directly to a real model ID", alias, target)
+		}
+		if target == cfg.Rotation.SOTA.Alias || target == cfg.Rotation.Sweet.Alias {
+			return fmt.Errorf("models.aliases[%q] points at the rotation group alias %q; map it to a real model ID", alias, target)
+		}
+	}
+	cfg.Models.Aliases = normalized
+	return nil
+}
+
+// ResolveModel returns the real upstream model ID an alias points at, or the
+// input unchanged when no alias applies. Resolution is one hop: an alias whose
+// target is itself an alias is rejected at load time, so no loop is possible.
+func (cfg Config) ResolveModel(model string) string {
+	if len(cfg.Models.Aliases) == 0 {
+		return model
+	}
+	if target, ok := cfg.Models.Aliases[model]; ok {
+		return target
+	}
+	return model
 }
 
 // normalizeReasoning validates and canonicalizes the forced thinking level.
@@ -345,6 +418,13 @@ func Clone(cfg Config) Config {
 			protocols[key] = value
 		}
 		cfg.Models.Protocols = protocols
+	}
+	if cfg.Models.Aliases != nil {
+		aliases := make(map[string]string, len(cfg.Models.Aliases))
+		for alias, target := range cfg.Models.Aliases {
+			aliases[alias] = target
+		}
+		cfg.Models.Aliases = aliases
 	}
 	if cfg.Reasoning.EffortByModel != nil {
 		efforts := make(map[string]string, len(cfg.Reasoning.EffortByModel))

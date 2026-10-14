@@ -586,6 +586,16 @@
                   <label>模型协议覆盖（JSON）</label
                   ><textarea id="c-protocols" spellcheck="false">{}</textarea>
                 </div>
+                <div class="field">
+                  <label>模型别名（JSON）</label
+                  ><textarea id="c-aliases" spellcheck="false">{}</textarea>
+                  <div class="section-caption">
+                    形如
+                    <code>{"gpt-5.5":"gpt-5.6"}</code
+                    >：客户端可用左侧名称请求，服务端按右侧真实模型路由， 响应里的 model
+                    始终是客户端发来的名称。别名不能指向另一个别名或轮换分组别名。
+                  </div>
+                </div>
               </div>
             </div>
             <div class="section">

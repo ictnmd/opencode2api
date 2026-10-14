@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"net/http"
+	"sort"
 	"time"
 
 	"opencode2api/internal/buildinfo"
@@ -177,5 +178,76 @@ func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request) {
 		}
 		data = append(data, map[string]any{"id": group.Alias, "object": "model", "created": now, "owned_by": "opencode-go-rotation"})
 	}
+	data = append(data, g.aliasModelEntries(now, data)...)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+}
+
+// aliasModelEntries advertises configured model aliases so a discovery-driven
+// client can pick one up and address the model by the name the operator chose.
+// An alias whose real model is not currently routable is omitted, exactly like
+// the real model itself would be; the entry carries the real ID in
+// upstream_model so the indirection stays visible to operators and clients.
+//
+// An alias that shadows a real model ID (a deliberate in-place rename) is not
+// listed twice: the real entry already advertises that name.
+func (g *Gateway) aliasModelEntries(now int64, existing []map[string]any) []map[string]any {
+	aliases := g.cfg.Models.Aliases
+	if len(aliases) == 0 {
+		return nil
+	}
+	listed := make(map[string]bool, len(existing)+len(aliases))
+	for _, entry := range existing {
+		if id, ok := entry["id"].(string); ok {
+			listed[id] = true
+		}
+	}
+	names := make([]string, 0, len(aliases))
+	for alias := range aliases {
+		if !listed[alias] {
+			names = append(names, alias)
+		}
+	}
+	sort.Strings(names)
+	entries := make([]map[string]any, 0, len(names))
+	for _, alias := range names {
+		model := aliases[alias]
+		route, err := g.catalog.Route(model, g.zenNodes.Len() > 0, g.goNodes.Len() > 0, g.cfg.Anonymous)
+		if err != nil {
+			continue
+		}
+		md := g.catalog.MetadataForTier(model, route.Tier)
+		entry := map[string]any{
+			"id": alias, "object": "model", "created": now, "owned_by": "opencode",
+			"metadata":        md,
+			"native_protocol": route.Protocol,
+			"upstream_model":  model,
+		}
+		if route.Protocol == wire.SystemOne {
+			entry["supported_endpoints"] = []string{"/v1/systemone"}
+		} else {
+			entry["supported_endpoints"] = []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"}
+		}
+		if md.ContextWindow > 0 {
+			entry["context_window"] = md.ContextWindow
+			entry["context_length"] = md.ContextWindow
+		}
+		if md.MaxInput > 0 {
+			entry["max_input"] = md.MaxInput
+		}
+		if md.MaxOutput > 0 {
+			entry["max_output"] = md.MaxOutput
+		}
+		if md.Reasoning {
+			entry["reasoning"] = true
+			entry["supports_reasoning"] = true
+		}
+		if md.ToolCall {
+			entry["tool_call"] = true
+		}
+		if md.StructuredOutput {
+			entry["structured_output"] = true
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }

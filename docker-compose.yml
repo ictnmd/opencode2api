@@ -1,0 +1,140 @@
+# opencode2api — Docker Compose (production-ready)
+#
+# Dùng:
+#   cp .env.example .env     # rồi sửa .env cho phù hợp
+#   docker compose up -d --build
+#   docker compose logs -f
+#
+# Compose tự đọc file `.env` cùng thư mục — không cần khai báo env_file.
+# Cấu hình có thể đặt hoàn toàn bằng biến O2A_* trong `.env`; xem docs/env-overlay.md.
+#
+# Cập nhật config runtime đã có trên volume:
+#   docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
+#   docker compose restart opencode2api
+#
+# Lưu ý: đây là file compose duy nhất của repo. Bản `compose.yaml` của upstream
+# (dùng image GHCR) đã được gộp vào đây, vì compose ưu tiên `compose.yaml` khi
+# tồn tại cả hai và như vậy `docker compose up` sẽ chạy nhầm file.
+
+name: opencode2api
+
+services:
+  opencode2api:
+    # --- Chọn 1 trong 2: build local (mặc định) hoặc dùng image GHCR ---
+    # Build local là mặc định vì overlay O2A_* cần entrypoint có jq; image GHCR
+    # phát hành chưa có overlay này.
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${OPENCODE2API_VERSION:-dev}
+    # image: ghcr.io/ictnmd/opencode2api:${OPENCODE2API_VERSION:-latest}
+    # pull_policy: always
+
+    # Không đặt `container_name`: để compose tự đặt tên theo project+service
+    # (`opencode2api-opencode2api-1`). Tên đó khớp với container mà bản
+    # `compose.yaml` cũ đã tạo, nên `docker compose up -d` sẽ recreate đúng
+    # container đang chạy thay vì tạo container thứ hai tranh port 8080/8081.
+    restart: unless-stopped
+
+    # Bảo mật: filesystem read-only + drop privileges
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      CONFIG_PATH: /var/lib/opencode2api/config.json
+      # Cố tình KHÔNG đặt CONFIG_SEED_PATH: entrypoint sẽ seed từ
+      # /app/config.example.json có sẵn trong image rồi áp overlay O2A_*.
+      # Không bind mount file seed nghĩa là không còn phụ thuộc file trên host —
+      # đây chính là nguyên nhân lỗi "bind source path does not exist" trên
+      # Dokploy, nơi config.json (bị .gitignore) không tồn tại trong repo.
+      #
+      # Muốn seed bằng config riêng: mount read-only rồi trỏ CONFIG_SEED_PATH vào
+      # đó (đường dẫn phải tồn tại trước khi container start):
+      #   environment:
+      #     CONFIG_SEED_PATH: /run/config/opencode2api.json
+      #   volumes:
+      #     - ./config.json:/run/config/opencode2api.json:ro
+      # Hoặc để container chạy rồi ghi đè:
+      #   docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
+      #   docker compose restart opencode2api
+      # Để trống = dùng listen trong config.json.
+      # Muốn override: OPENCODE2API_LISTEN=0.0.0.0:8080
+      LISTEN_ADDRESS: ${OPENCODE2API_LISTEN:-}
+      WEBUI_LISTEN_ADDRESS: ${OPENCODE2API_WEBUI_LISTEN:-}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+      # --- Env overlay: O2A_* phủ lên config JSON mỗi lần container start ---
+      # Unset/rỗng = không override (giữ giá trị trong JSON).
+      # Biến _FILE ưu tiên hơn biến thường. Chi tiết: docs/env-overlay.md.
+      # Secrets (keys/password): comma-separated cho keys; _FILE đọc nguyên file.
+      O2A_SERVER_KEYS: ${O2A_SERVER_KEYS:-}
+      O2A_SERVER_KEYS_FILE: ${O2A_SERVER_KEYS_FILE:-}
+      O2A_ZEN_KEYS: ${O2A_ZEN_KEYS:-}
+      O2A_ZEN_KEYS_FILE: ${O2A_ZEN_KEYS_FILE:-}
+      O2A_GO_KEYS: ${O2A_GO_KEYS:-}
+      O2A_GO_KEYS_FILE: ${O2A_GO_KEYS_FILE:-}
+      O2A_WEBUI_PASSWORD: ${O2A_WEBUI_PASSWORD:-}
+      O2A_WEBUI_PASSWORD_FILE: ${O2A_WEBUI_PASSWORD_FILE:-}
+      # Upstream/proxy: comma-separated cho proxies; true/false cho anonymous.
+      O2A_ANONYMOUS: ${O2A_ANONYMOUS:-}
+      O2A_UPSTREAM_ZEN: ${O2A_UPSTREAM_ZEN:-}
+      O2A_UPSTREAM_GO: ${O2A_UPSTREAM_GO:-}
+      O2A_PROXIES: ${O2A_PROXIES:-}
+      O2A_PROXIES_FILE: ${O2A_PROXIES_FILE:-}
+      O2A_PROXYFILE: ${O2A_PROXYFILE:-}
+      # Runtime (retry/models/log/prefer/reasoning/listen API).
+      O2A_RETRY_MAX_ATTEMPTS: ${O2A_RETRY_MAX_ATTEMPTS:-}
+      O2A_RETRY_TIMEOUT_SECONDS: ${O2A_RETRY_TIMEOUT_SECONDS:-}
+      O2A_MODELS_REFRESH_SECONDS: ${O2A_MODELS_REFRESH_SECONDS:-}
+      O2A_MODEL_ALIASES: ${O2A_MODEL_ALIASES:-}
+      O2A_LOG_LEVEL: ${O2A_LOG_LEVEL:-}
+      O2A_PREFER: ${O2A_PREFER:-}
+      O2A_REASONING_EFFORT: ${O2A_REASONING_EFFORT:-}
+      O2A_LISTEN: ${O2A_LISTEN:-}
+      # WebUI.
+      O2A_WEBUI_ENABLED: ${O2A_WEBUI_ENABLED:-}
+      O2A_WEBUI_USERNAME: ${O2A_WEBUI_USERNAME:-}
+      O2A_WEBUI_LISTEN: ${O2A_WEBUI_LISTEN:-}
+      # Rotation (sota/sweet order comma-separated; first_output tính bằng giây).
+      O2A_SOTA_ORDER: ${O2A_SOTA_ORDER:-}
+      O2A_SWEET_ORDER: ${O2A_SWEET_ORDER:-}
+      O2A_FIRST_OUTPUT_SECONDS: ${O2A_FIRST_OUTPUT_SECONDS:-}
+
+    ports:
+      - "${OPENCODE2API_PORT:-8080}:8080"
+      - "${OPENCODE2API_WEBUI_PORT:-8081}:8081"
+
+    # Không dùng block `configs:` ở đây. `configs` file-based của compose là
+    # bind mount, nên file nguồn BẮT BUỘC phải tồn tại trên host ngay lúc tạo
+    # container; nếu không Docker báo "bind source path does not exist".
+    # Vì config.json bị .gitignore (không có trên clone sạch), việc seed được
+    # giao cho entrypoint: nó dùng /app/config.example.json trong image rồi áp
+    # overlay O2A_* lên trên.
+
+    volumes:
+      # State + config runtime (persist sau lần seed đầu)
+      - opencode2api-state:/var/lib/opencode2api
+
+    tmpfs:
+      - /tmp
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # Không pin `name:` để compose tự đặt tên theo project (`opencode2api-state`
+  # → `opencode2api_opencode2api-state`). Tên đó khớp với volume mà bản
+  # `compose.yaml` cũ đã tạo, nên state hiện có (config runtime, cache model,
+  # rotation) được giữ nguyên khi chuyển sang file này.
+  opencode2api-state:

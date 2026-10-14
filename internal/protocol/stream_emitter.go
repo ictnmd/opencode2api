@@ -25,10 +25,14 @@ type bridgeStreamTool struct {
 }
 
 type bridgeStreamEmitter struct {
-	w                  io.Writer
-	flush              http.Flusher
-	target             Protocol
-	model              string
+	w      io.Writer
+	flush  http.Flusher
+	target Protocol
+	model  string
+	// pinned keeps the caller's model name authoritative. It is set when the
+	// client must see the name it asked for rather than the upstream's own,
+	// which is the case for a configured model alias.
+	pinned             bool
 	id                 string
 	created            int64
 	started            bool
@@ -70,11 +74,19 @@ func newBridgeStreamEmitter(writer io.Writer, flusher http.Flusher, target Proto
 	}
 }
 
+// PinModel keeps the emitter's model name fixed for the whole response. It is
+// used when the downstream name must not follow the upstream's own: a client
+// that asked for an alias has to see that alias in every frame and in the final
+// document, however the serving upstream identifies itself.
+func (emitter *bridgeStreamEmitter) PinModel() {
+	emitter.pinned = true
+}
+
 func (emitter *bridgeStreamEmitter) Emit(event bridgeStreamEvent) error {
 	if event.ResponseID != "" && emitter.id == "" {
 		emitter.id = event.ResponseID
 	}
-	if event.Model != "" {
+	if event.Model != "" && !emitter.pinned {
 		emitter.model = event.Model
 	}
 	if !emitter.started && (event.Kind == "start" || event.Kind == "reasoning" || event.Kind == "reasoning_signature" || event.Kind == "text" || event.Kind == "tool_start" || event.Kind == "tool_delta") {

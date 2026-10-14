@@ -66,11 +66,14 @@ this branch.
 
 ```bash
 cp .env.example .env
-# Either fill in O2A_* values in .env, or configure config.json:
-cp config.example.json config.json
+# Fill in the O2A_* values in .env — no config.json is needed:
 docker compose up -d --build
 docker compose logs -f
 ```
+
+On first start the entrypoint seeds `/var/lib/opencode2api/config.json` from the
+`config.example.json` bundled in the image, then applies the `O2A_*` overlay, so
+a fresh clone with no host configuration file deploys cleanly.
 
 Compose imports the host configuration into the `opencode2api-state` volume **only on first startup**. Subsequent changes should be made through the WebUI. To import an edited host configuration again:
 

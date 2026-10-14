@@ -12,7 +12,7 @@ không cần sửa `config.json` trên host.
 
 1. Copy `.env.example` thành `.env` rồi điền giá trị. `docker compose` tự đọc
    file `.env` cùng thư mục (không cần khai báo `env_file`).
-2. `compose.yaml` truyền toàn bộ biến `O2A_*` vào container dạng
+2. `docker-compose.yml` truyền toàn bộ biến `O2A_*` vào container dạng
    `${O2A_XXX:-}` — unset/rỗng trong `.env` thành chuỗi rỗng trong container.
 3. **Mỗi lần container start**, `docker-entrypoint.sh` dùng `jq` merge các
    `O2A_*` đang **được set và khác rỗng** vào config runtime
@@ -20,9 +20,40 @@ không cần sửa `config.json` trên host.
    `opencode2api-state`, persist giữa các lần restart).
    - Không chỉ lần seed đầu: lần restart nào env cũng phủ lên lại.
    - Lần đầu chưa có config runtime thì entrypoint seed từ
-     `CONFIG_SEED_PATH` (`/run/config/opencode2api.json`, lấy từ `./config.json`
-     của host qua `configs:`), sau đó mới merge env.
+     `/app/config.example.json` **có sẵn trong image**, rồi mới merge env.
+     Compose cố tình **không** đặt `CONFIG_SEED_PATH` và **không** bind mount
+     file seed: `configs:` của compose là bind mount nên file nguồn phải tồn
+     tại trên host, mà `config.json` bị `.gitignore` — trên clone sạch
+     (Dokploy, CI, máy mới) điều đó gây lỗi
+     `bind source path does not exist` và container không tạo được.
 4. App Go đọc config runtime như bình thường, không biết gì về env.
+
+## Seed bằng config.json riêng (tùy chọn)
+
+Mặc định container tự seed từ `config.example.json` trong image rồi áp `O2A_*`,
+nên **không cần file nào trên host**. Nếu muốn seed bằng config riêng thì chọn
+một trong hai cách:
+
+- **Mount read-only + trỏ `CONFIG_SEED_PATH`** (đường dẫn phải tồn tại trước khi
+  container start — trên Dokploy hãy dùng volume/secret của nền tảng thay vì
+  file trong repo):
+
+  ```yaml
+  environment:
+    CONFIG_SEED_PATH: /run/config/opencode2api.json
+  volumes:
+    - ./config.json:/run/config/opencode2api.json:ro
+  ```
+
+- **Ghi đè sau khi container chạy** (không cần file lúc tạo container):
+
+  ```bash
+  docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
+  docker compose restart opencode2api
+  ```
+
+Lưu ý: cách này chỉ ghi đè được khi volume đã có config; lần restart sau, `O2A_*`
+vẫn tiếp tục phủ lên những trường mà env đang set.
 
 ## Thứ tự ưu tiên
 

@@ -31,7 +31,10 @@ services:
     # image: ghcr.io/ictnmd/opencode2api:${OPENCODE2API_VERSION:-latest}
     # pull_policy: always
 
-    container_name: opencode2api
+    # Không đặt `container_name`: để compose tự đặt tên theo project+service
+    # (`opencode2api-opencode2api-1`). Tên đó khớp với container mà bản
+    # `compose.yaml` cũ đã tạo, nên `docker compose up -d` sẽ recreate đúng
+    # container đang chạy thay vì tạo container thứ hai tranh port 8080/8081.
     restart: unless-stopped
 
     # Bảo mật: filesystem read-only + drop privileges
@@ -41,7 +44,21 @@ services:
 
     environment:
       CONFIG_PATH: /var/lib/opencode2api/config.json
-      CONFIG_SEED_PATH: /run/config/opencode2api.json
+      # Cố tình KHÔNG đặt CONFIG_SEED_PATH: entrypoint sẽ seed từ
+      # /app/config.example.json có sẵn trong image rồi áp overlay O2A_*.
+      # Không bind mount file seed nghĩa là không còn phụ thuộc file trên host —
+      # đây chính là nguyên nhân lỗi "bind source path does not exist" trên
+      # Dokploy, nơi config.json (bị .gitignore) không tồn tại trong repo.
+      #
+      # Muốn seed bằng config riêng: mount read-only rồi trỏ CONFIG_SEED_PATH vào
+      # đó (đường dẫn phải tồn tại trước khi container start):
+      #   environment:
+      #     CONFIG_SEED_PATH: /run/config/opencode2api.json
+      #   volumes:
+      #     - ./config.json:/run/config/opencode2api.json:ro
+      # Hoặc để container chạy rồi ghi đè:
+      #   docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
+      #   docker compose restart opencode2api
       # Để trống = dùng listen trong config.json.
       # Muốn override: OPENCODE2API_LISTEN=0.0.0.0:8080
       LISTEN_ADDRESS: ${OPENCODE2API_LISTEN:-}
@@ -87,10 +104,12 @@ services:
       - "${OPENCODE2API_PORT:-8080}:8080"
       - "${OPENCODE2API_WEBUI_PORT:-8081}:8081"
 
-    # Seed config lần đầu từ file ./config.json của host (chỉ lần seed đầu)
-    configs:
-      - source: opencode2api_config
-        target: /run/config/opencode2api.json
+    # Không dùng block `configs:` ở đây. `configs` file-based của compose là
+    # bind mount, nên file nguồn BẮT BUỘC phải tồn tại trên host ngay lúc tạo
+    # container; nếu không Docker báo "bind source path does not exist".
+    # Vì config.json bị .gitignore (không có trên clone sạch), việc seed được
+    # giao cho entrypoint: nó dùng /app/config.example.json trong image rồi áp
+    # overlay O2A_* lên trên.
 
     volumes:
       # State + config runtime (persist sau lần seed đầu)
@@ -111,10 +130,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-configs:
-  opencode2api_config:
-    file: ./config.json
 
 volumes:
   # Không pin `name:` để compose tự đặt tên theo project (`opencode2api-state`

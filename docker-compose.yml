@@ -1,0 +1,72 @@
+# opencode2api — Docker Compose (production-ready)
+# Dùng:  docker compose up -d --build
+# Logs:  docker compose logs -f
+# Update config: docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
+#                docker compose restart opencode2api
+
+name: opencode2api
+
+services:
+  opencode2api:
+    # --- Chọn 1 trong 2: build local hoặc dùng image GHCR ---
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${OPENCODE2API_VERSION:-dev}
+    # image: ghcr.io/jasonxu114514/opencode2api:${OPENCODE2API_VERSION:-latest}
+    # pull_policy: always
+
+    container_name: opencode2api
+    restart: unless-stopped
+
+    # Bảo mật: filesystem read-only + drop privileges
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      CONFIG_PATH: /var/lib/opencode2api/config.json
+      CONFIG_SEED_PATH: /run/config/opencode2api.json
+      # Để trống = dùng listen trong config.json.
+      # Muốn override: OPENCODE2API_LISTEN=0.0.0.0:8080
+      LISTEN_ADDRESS: ${OPENCODE2API_LISTEN:-}
+      WEBUI_LISTEN_ADDRESS: ${OPENCODE2API_WEBUI_LISTEN:-}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+
+    ports:
+      - "${OPENCODE2API_PORT:-8080}:8080"
+      - "${OPENCODE2API_WEBUI_PORT:-8081}:8081"
+
+    # Seed config lần đầu từ file ./config.json của host
+    configs:
+      - source: opencode2api_config
+        target: /run/config/opencode2api.json
+
+    volumes:
+      # State + config runtime (persist sau lần seed đầu)
+      - opencode2api-state:/var/lib/opencode2api
+
+    tmpfs:
+      - /tmp
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+configs:
+  opencode2api_config:
+    file: ./config.json
+
+volumes:
+  opencode2api-state:
+    name: opencode2api-state

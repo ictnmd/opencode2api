@@ -256,7 +256,7 @@ Key 初始化时均衡分配到代理。真实流量可以触发代理检查、K
 | `zen_keys`、`go_keys`       | 未启用匿名模式时，至少需要一个上游 Key。                                              |
 | `anonymous`                 | `false`。                                                                             |
 | `prefer`                    | `go`；可选 `go`、`zen`。                                                              |
-| `upstream.zen`              | `https://opencode.ai/zen`。                                                           |
+| `upstream.zen`              | `https://opencode.ai/inference/openai`。                                                           |
 | `upstream.go`               | `https://opencode.ai/zen/go`。                                                        |
 | `proxies`                   | 两个代理来源都为空时，使用 `["direct"]`。                                             |
 | `proxyfile`                 | 可选；相对路径基于配置文件所在目录解析。                                              |
@@ -453,16 +453,13 @@ go build -o opencode2api ./cmd/opencode2api
 
 开发时可以直接运行 `go run ./cmd/opencode2api -config config.json`。发布构建仍通过 `-ldflags "-X main.version=vX.Y.Z"` 注入版本号。
 
-Node.js 仅用于开发时的格式化和 JavaScript 语法检查：
+Node.js 仅用于 WebUI 的 JavaScript 语法检查：
 
 ```bash
-npm ci --ignore-scripts
-npm run format
-npm run format:check
-npm run check:web
+node --check webui/app.js
 ```
 
-项目通过 `.editorconfig`、`.gitattributes`、Go 格式化和固定版本的 Prettier 统一格式。CI 覆盖 Linux / Windows 上的 Go 1.24 与稳定版 Go 的 `go vet` 和构建，以及格式、WebUI 语法和容器入口脚本语法检查。发布压缩包包含中英文两份 README。
+项目通过 `.editorconfig`、`.gitattributes` 和 Go 格式化统一格式。CI 覆盖 Linux / Windows 上的 Go 1.24 与稳定版 Go 的 `go vet` 和构建，以及 Go 格式、WebUI 语法和容器入口脚本语法检查。发布压缩包包含中英文两份 README。
 
 ## 常见问题
 

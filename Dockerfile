@@ -21,7 +21,7 @@ RUN CGO_ENABLED=0 \
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates su-exec tzdata \
+RUN apk add --no-cache ca-certificates su-exec tzdata jq \
     && addgroup -S opencode2api \
     && adduser -S -G opencode2api -h /var/lib/opencode2api opencode2api \
     && mkdir -p /app /var/lib/opencode2api \

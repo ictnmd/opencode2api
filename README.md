@@ -59,12 +59,16 @@ The configuration directory must be writable for password migration, configurati
 
 ## Docker
 
-The published image is `ghcr.io/jasonxu114514/opencode2api`.
+The upstream image is published as `ghcr.io/jasonxu114514/opencode2api`, but this
+repository's compose file builds locally by default, because the `O2A_*`
+environment overlay described below needs the `jq`-based entrypoint shipped by
+this branch.
 
 ```bash
+cp .env.example .env
+# Either fill in O2A_* values in .env, or configure config.json:
 cp config.example.json config.json
-# Configure keys and replace the WebUI password before starting.
-docker compose up -d
+docker compose up -d --build
 docker compose logs -f
 ```
 
@@ -86,6 +90,25 @@ The container runs the service as an unprivileged user. Compose uses a read-only
 | `OPENCODE2API_WEBUI_LISTEN` | Unset    | Explicit container WebUI listen override.         |
 
 The last two variables become `LISTEN_ADDRESS` and `WEBUI_LISTEN_ADDRESS` inside the container. Empty values defer to the configuration file. While initializing a configuration, the entrypoint changes the example API address `127.0.0.1:8080` to `0.0.0.0:8080` so published ports can reach it.
+
+### Docker env overlay (`O2A_*`)
+
+The compose file also forwards optional `O2A_*` variables, which the container
+entrypoint merges over `/var/lib/opencode2api/config.json` on **every** start
+(empty/unset means keep the JSON value; a `_FILE` variant wins over its plain
+counterpart). This covers keys, upstream URLs, proxies, retry/model/log
+settings, WebUI credentials, rotation order, and listeners — so a deploy can be
+driven by `.env` alone:
+
+```bash
+cp .env.example .env   # fill in values, then:
+docker compose up -d --build
+```
+
+See [docs/env-overlay.md](docs/env-overlay.md) for the mechanism, the full
+variable table, and deploy examples. Note: fields managed through the WebUI are
+overwritten by `O2A_*` on the next restart, and `O2A_*` has no effect when
+running the binary directly (it still uses `config.json`).
 
 Changing host ports does not change container listeners. If you change the internal API port, also update the port mapping and the image health check, which uses port 8080.
 

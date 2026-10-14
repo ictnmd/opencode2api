@@ -19,6 +19,7 @@ coverage.out
 .rotation-*.tmp
 
 # Local credentials, deployment backups, and verification artifacts
+.env
 .local/
 *.availability.json
 *.backup.json

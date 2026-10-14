@@ -1,0 +1,187 @@
+# Env overlay cho Docker (phương án B: `O2A_*` phủ lên config JSON)
+
+Tài liệu này giải thích cách cấu hình container **chỉ bằng biến môi trường**,
+không cần sửa `config.json` trên host.
+
+## Cơ chế hoạt động
+
+```
+.env  →  `docker compose` environment  →  entrypoint merge bằng jq
+       →  /var/lib/opencode2api/config.json  →  app Go đọc config
+```
+
+1. Copy `.env.example` thành `.env` rồi điền giá trị. `docker compose` tự đọc
+   file `.env` cùng thư mục (không cần khai báo `env_file`).
+2. `compose.yaml` truyền toàn bộ biến `O2A_*` vào container dạng
+   `${O2A_XXX:-}` — unset/rỗng trong `.env` thành chuỗi rỗng trong container.
+3. **Mỗi lần container start**, `docker-entrypoint.sh` dùng `jq` merge các
+   `O2A_*` đang **được set và khác rỗng** vào config runtime
+   `/var/lib/opencode2api/config.json` (file nằm trên volume
+   `opencode2api-state`, persist giữa các lần restart).
+   - Không chỉ lần seed đầu: lần restart nào env cũng phủ lên lại.
+   - Lần đầu chưa có config runtime thì entrypoint seed từ
+     `CONFIG_SEED_PATH` (`/run/config/opencode2api.json`, lấy từ `./config.json`
+     của host qua `configs:`), sau đó mới merge env.
+4. App Go đọc config runtime như bình thường, không biết gì về env.
+
+## Thứ tự ưu tiên
+
+Với mỗi trường config:
+
+```
+biến _FILE  >  biến thường  >  giá trị trong JSON
+```
+
+- **Unset hoặc rỗng = không override**, giữ nguyên giá trị trong JSON.
+- Nhóm `_FILE` (`O2A_SERVER_KEYS_FILE`, `O2A_ZEN_KEYS_FILE`,
+  `O2A_GO_KEYS_FILE`, `O2A_PROXIES_FILE`, `O2A_WEBUI_PASSWORD_FILE`) đọc nguyên
+  nội dung file theo **đường dẫn trong container** (cần mount volume/secret cho
+  path đó). Khi `_FILE` được set và đọc được, nó **thắng** biến thường cùng nhóm
+  kể cả khi biến thường cũng được set.
+- Không có chuyện env "xoá" giá trị JSON bằng chuỗi rỗng: chuỗi rỗng luôn bị bỏ qua.
+
+## Bảng biến đầy đủ
+
+Tất cả đều optional.
+
+| Biến môi trường              | Ghi vào config                  | Format / giá trị hợp lệ                                                 | Ví dụ                                                      |
+| ---------------------------- | ------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `O2A_SERVER_KEYS`            | `server_keys`                   | Comma-separated, mỗi key một chuỗi                                      | `sk-local-aaa111,sk-local-bbb222`                          |
+| `O2A_SERVER_KEYS_FILE`       | `server_keys` (thắng trên)      | Path trong container; nội dung comma-separated hoặc mỗi dòng một key    | `/run/secrets/server_keys`                                 |
+| `O2A_ZEN_KEYS`               | `zen_keys`                      | Comma-separated                                                         | `zen-key-aaa111,zen-key-bbb222`                            |
+| `O2A_ZEN_KEYS_FILE`          | `zen_keys` (thắng trên)         | Path trong container, format như trên                                   | `/run/secrets/zen_keys`                                    |
+| `O2A_GO_KEYS`                | `go_keys`                       | Comma-separated                                                         | `go-key-aaa111,go-key-bbb222`                              |
+| `O2A_GO_KEYS_FILE`           | `go_keys` (thắng trên)          | Path trong container, format như trên                                   | `/run/secrets/go_keys`                                     |
+| `O2A_ANONYMOUS`              | `anonymous`                     | `true` / `false`                                                        | `true`                                                     |
+| `O2A_PROXIES`                | `proxies`                       | Comma-separated: `direct`, `http(s)://`, `socks5(h)://`                 | `direct,http://user:pass@127.0.0.1:7890`                   |
+| `O2A_PROXIES_FILE`           | `proxies` (thắng trên)          | Path trong container; mỗi dòng một entry, hỗ trợ comment `#`, `;`, `//` | `/run/config/proxies.txt`                                  |
+| `O2A_PROXYFILE`              | `proxyfile`                     | Path (container phải đọc được)                                          | `/var/lib/opencode2api/proxies.txt`                        |
+| `O2A_UPSTREAM_ZEN`           | `upstream.zen`                  | URL                                                                     | `https://opencode.ai/zen`                                  |
+| `O2A_UPSTREAM_GO`            | `upstream.go`                   | URL                                                                     | `https://opencode.ai/zen/go`                               |
+| `O2A_RETRY_MAX_ATTEMPTS`     | `retry.max_attempts`            | Số nguyên                                                               | `3`                                                        |
+| `O2A_RETRY_TIMEOUT_SECONDS`  | `retry.timeout_seconds`         | Số (giây)                                                               | `300`                                                      |
+| `O2A_MODELS_REFRESH_SECONDS` | `models.refresh_seconds`        | Số nguyên, tối thiểu 1                                                  | `300`                                                      |
+| `O2A_LOG_LEVEL`              | `logging.level`                 | `debug` / `info` / `warn` / `error`                                     | `info`                                                     |
+| `O2A_PREFER`                 | `prefer`                        | `go` / `zen`                                                            | `go`                                                       |
+| `O2A_REASONING_EFFORT`       | `reasoning.effort`              | `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `none`              | `high`                                                     |
+| `O2A_WEBUI_ENABLED`          | `webui.enabled`                 | `true` / `false`                                                        | `true`                                                     |
+| `O2A_WEBUI_USERNAME`         | `webui.username`                | Chuỗi                                                                   | `admin`                                                    |
+| `O2A_WEBUI_PASSWORD`         | `webui.password`                | Chuỗi, tối thiểu 10 ký tự (sẽ được hash lúc start)                      | `change-me-min-10-chars`                                   |
+| `O2A_WEBUI_PASSWORD_FILE`    | `webui.password` (thắng trên)   | Path trong container chứa password                                      | `/run/secrets/webui_password`                              |
+| `O2A_SOTA_ORDER`             | `rotation.sota.order`           | Comma-separated, **phải đủ đúng 5 model SOTA**                          | `deepseek-v4.1-flash,glm-5.3,grok-4.6,kimi-k3,qwen3.8-max` |
+| `O2A_SWEET_ORDER`            | `rotation.sweet.order`          | Comma-separated (để trống = giữ JSON)                                   | `fast-a,fast-b`                                            |
+| `O2A_FIRST_OUTPUT_SECONDS`   | `rotation.first_output_seconds` | Số nguyên 1–300 (0 sẽ về mặc định 30)                                   | `15`                                                       |
+| `O2A_LISTEN`                 | `listen`                        | `host:port`                                                             | `0.0.0.0:8080`                                             |
+| `O2A_WEBUI_LISTEN`           | `webui.listen`                  | `host:port`                                                             | `0.0.0.0:8081`                                             |
+
+Ngoài ra compose vẫn giữ các biến cũ (không thuộc overlay `jq`, mà thành
+`LISTEN_ADDRESS` / `WEBUI_LISTEN_ADDRESS` truyền thẳng cho entrypoint/binary):
+
+| Biến compose                | Tác dụng                                          |
+| --------------------------- | ------------------------------------------------- |
+| `OPENCODE2API_LISTEN`       | Override API listen qua `LISTEN_ADDRESS`.         |
+| `OPENCODE2API_WEBUI_LISTEN` | Override WebUI listen qua `WEBUI_LISTEN_ADDRESS`. |
+
+## Lưu ý quan trọng
+
+1. **Entrypoint chỉ validate được kiểu dữ liệu, không thay Go validate.** Với
+   trường số nguyên và boolean, entrypoint tự kiểm tra: giá trị không hợp lệ
+   (ví dụ `O2A_RETRY_MAX_ATTEMPTS=abc`, `O2A_ANONYMOUS=maybe`) bị **bỏ qua**
+   (giữ JSON cũ) và log cảnh báo ra stderr, các trường khác vẫn được áp dụng.
+   Nhưng với trường chuỗi/URL/`prefer`/`log level`, entrypoint ghi nguyên giá
+   trị vào JSON — sai giá trị thì **app Go vẫn fail lúc start** khi validate
+   config. Đừng trông chờ env tự "sửa" lỗi.
+2. **Đổi listen cần recreate container.** `O2A_LISTEN` / `O2A_WEBUI_LISTEN`
+   (và `OPENCODE2API_LISTEN` / `OPENCODE2API_WEBUI_LISTEN`) đổi địa chỉ process
+   lắng nghe — `docker compose restart` (giữ container cũ) là chưa đủ, phải
+   `docker compose up -d` để recreate. Đổi port nội bộ cũng phải sửa thêm port
+   mapping và healthcheck (đang dùng cổng 8080).
+   Khi cả hai cùng được set, `LISTEN_ADDRESS` / `WEBUI_LISTEN_ADDRESS` (từ
+   `OPENCODE2API_LISTEN` / `OPENCODE2API_WEBUI_LISTEN`) **thắng** `O2A_LISTEN` /
+   `O2A_WEBUI_LISTEN`, vì flag dòng lệnh có độ ưu tiên cao nhất lúc runtime.
+3. **WebUI sửa config sẽ bị env phủ lại.** WebUI ghi vào config runtime trên
+   volume; lần restart sau, entrypoint lại merge `O2A_*` lên trên. Nghĩa là với
+   trường nào đang set env, **env luôn thắng** — sửa cùng trường đó trên WebUI
+   chỉ có tác dụng tới lần restart tiếp theo. Muốn WebUI quản trị hẳn một
+   trường thì bỏ biến env tương ứng khỏi `.env` (unset/rỗng).
+4. **`O2A_WEBUI_PASSWORD` được hash lại mỗi lần start.** Khi biến này được set,
+   entrypoint ghi plaintext vào `webui.password` và **xoá `webui.password_hash`**
+   để app Go hash lại. Vì salt Argon2id đổi mỗi lần, `password_hash` trong file
+   sẽ khác nhau sau mỗi lần restart — đây là hành vi bình thường, không phải lỗi
+   cấu hình. Mật khẩu đăng nhập không đổi.
+5. **Config runtime luôn được đặt mode `600`.** File chứa upstream key và
+   credential proxy, entrypoint `chmod 600` sau khi seed và giữ nguyên mode này
+   khi ghi đè.
+6. **O2A\_\* chỉ có tác dụng trong container.** Chạy binary trực tiếp
+   (`./opencode2api -config config.json`) thì entrypoint không chạy, env bị bỏ
+   qua — vẫn cấu hình bằng `config.json` như cũ.
+7. **File `.env` chứa secret** — không commit (đã có trong `.gitignore`), chỉ
+   commit `.env.example` với placeholder.
+
+## Ví dụ deploy
+
+### A. Anonymous lane + proxy direct, chỉ bằng `.env` (không sửa config.json)
+
+```dotenv
+OPENCODE2API_VERSION=latest
+OPENCODE2API_PORT=8909
+OPENCODE2API_WEBUI_PORT=8901
+
+O2A_SERVER_KEYS=sk-local-aaa111
+O2A_ANONYMOUS=true
+O2A_PROXIES=direct
+O2A_PREFER=zen
+O2A_WEBUI_ENABLED=true
+O2A_WEBUI_USERNAME=admin
+O2A_WEBUI_PASSWORD=change-me-min-10-chars
+O2A_LOG_LEVEL=info
+```
+
+```bash
+cp .env.example .env   # rồi điền giá trị như trên
+docker compose up -d --build
+docker compose logs -f
+```
+
+`zen_keys` / `go_keys` để trống + `anonymous=true` là đủ điều kiện chạy lane
+public (model `free` / zero-cost, xem README phần anonymous).
+
+### B. Production: keys qua file (docker secret / mount read-only)
+
+```dotenv
+OPENCODE2API_VERSION=v1.2.3
+O2A_SERVER_KEYS_FILE=/run/secrets/server_keys
+O2A_ZEN_KEYS_FILE=/run/secrets/zen_keys
+O2A_GO_KEYS_FILE=/run/secrets/go_keys
+O2A_WEBUI_PASSWORD_FILE=/run/secrets/webui_password
+O2A_ANONYMOUS=false
+O2A_PREFER=go
+O2A_RETRY_MAX_ATTEMPTS=3
+O2A_RETRY_TIMEOUT_SECONDS=300
+O2A_MODELS_REFRESH_SECONDS=300
+O2A_LOG_LEVEL=warn
+O2A_WEBUI_ENABLED=true
+O2A_WEBUI_USERNAME=admin
+```
+
+Kèm thêm mount secret vào service (ngoài phạm vi compose mặc định), ví dụ:
+
+```yaml
+secrets:
+  - server_keys
+  - zen_keys
+```
+
+File secret chứa comma-separated keys hoặc mỗi key một dòng.
+
+## Kiểm tra overlay có ăn không
+
+```bash
+# Xem entrypoint đã merge gì (log lúc start):
+docker compose logs opencode2api | head -50
+# So sánh config runtime thực tế:
+docker compose exec opencode2api cat /var/lib/opencode2api/config.json
+```
+
+Secret trong config runtime hiển thị plaintext (đây là file nội bộ trên volume,
+không commit). Không `docker compose cp` ngược file này ra host nếu không cần.

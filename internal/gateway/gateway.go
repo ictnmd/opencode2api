@@ -135,19 +135,37 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			wire.WriteError(w, external, http.StatusBadRequest, "model is required", "invalid_request_error", "model")
 			return
 		}
-		if id := g.rotation.GroupID(model); id != "" {
+		// An operator can publish a model under a different client-facing name.
+		// Routing always follows the real model ID, while the name the client
+		// used is retained so the reply can report it back unchanged.
+		resolved := g.cfg.ResolveModel(model)
+		aliased := resolved != model
+		if aliased {
+			// Every upstream encoding below reads the model from this payload,
+			// including the same-protocol clone, so the real ID has to be
+			// written back before the body is prepared. The client-facing name
+			// stays in `model` for the response rewrite.
+			payload["model"] = resolved
+			if meta != nil {
+				// Keep the two names distinguishable in logs and metrics: the
+				// serving model is the real one, the alias is what the client
+				// called it. This matches how rotation reports its own alias.
+				meta.Model, meta.ModelAlias = resolved, model
+			}
+		}
+		if id := g.rotation.GroupID(resolved); id != "" {
 			g.handleRotation(w, r, external, payload, id, model)
 			return
 		}
-		if !g.catalog.Supported(model) {
+		if !g.catalog.Supported(resolved) {
 			wire.WriteError(w, external, http.StatusBadRequest, "the model uses an upstream protocol that opencode2api does not expose", "invalid_request_error", "model")
 			return
 		}
-		route, err := g.catalog.Route(model, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0, g.cfg.Anonymous)
+		route, err := g.catalog.Route(resolved, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0, g.cfg.Anonymous)
 		if override, selected := debugKeyOverrideFrom(r.Context()); selected {
 			// A per-key diagnostic must not silently be served by another key,
 			// another tier or the anonymous lane.
-			route, err = g.catalog.RouteForTier(model, override.Tier, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0)
+			route, err = g.catalog.RouteForTier(resolved, override.Tier, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0)
 		}
 		if err != nil {
 			wire.WriteError(w, external, http.StatusBadRequest, err.Error(), "invalid_request_error", "model")
@@ -167,7 +185,18 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 				wire.WriteError(w, external, http.StatusBadRequest, "this model uses System One decisions, not chat; send state and typed questions to /v1/systemone", "invalid_request_error", "model")
 				return
 			}
-			g.forwardSystemOne(w, r, body, payload, model, route)
+			// System One payloads are relayed verbatim, so the real model ID has
+			// to be written back into the body for an aliased request.
+			if aliased {
+				payload["model"] = resolved
+				encoded, encodeErr := json.Marshal(payload)
+				if encodeErr != nil {
+					wire.WriteError(w, external, http.StatusBadRequest, "request contains unsupported JSON values", "invalid_request_error", "")
+					return
+				}
+				body = encoded
+			}
+			g.forwardSystemOne(w, r, body, payload, model, route, aliased)
 			return
 		}
 		bodies, err := g.prepareRouteBodies(external, route, payload)
@@ -224,9 +253,15 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			var usage wire.Usage
 			var usageReported bool
 			if external == upstreamRoute.Protocol {
-				usage, usageReported, err = wire.ForwardStream(r.Context(), w, resp.Body, upstreamRoute.Protocol, model)
+				// Same-protocol streams are copied byte-for-byte, so an aliased
+				// request needs its frames rewritten on the way through.
+				var source io.Reader = resp.Body
+				if aliased {
+					source = wire.NewModelRewriteReader(source, model)
+				}
+				usage, usageReported, err = wire.ForwardStream(r.Context(), w, source, upstreamRoute.Protocol, model)
 			} else {
-				usage, usageReported, err = wire.TranscodeStream(r.Context(), w, resp.Body, upstreamRoute.Protocol, external, model)
+				usage, usageReported, err = wire.TranscodeStream(r.Context(), w, resp.Body, upstreamRoute.Protocol, external, model, aliased)
 			}
 			if meta != nil {
 				meta.Usage, meta.UsageReported = usage, usageReported
@@ -238,7 +273,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 				}
 			}
 			if err != nil && !errors.Is(err, context.Canceled) {
-				g.logger.Warn("downstream stream ended with an error", "component", "stream", "event", "stream_failed", "request_id", ids.Request, "model", model, "tier", upstreamRoute.Tier, "error", err)
+				g.logger.Warn("downstream stream ended with an error", "component", "stream", "event", "stream_failed", "request_id", ids.Request, "model", resolved, "tier", upstreamRoute.Tier, "error", err)
 			}
 			return
 		}
@@ -255,7 +290,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			// non-streaming client asked for.
 			collapsed, err := wire.CollapseStream(bytes.NewReader(responseBody), upstreamRoute.Protocol, model)
 			if err != nil {
-				g.logger.Warn("anonymous stream collapse failed", "component", "conversion", "event", "anonymous_collapse_failed", "request_id", ids.Request, "model", model, "source_protocol", upstreamRoute.Protocol, "error", err)
+				g.logger.Warn("anonymous stream collapse failed", "component", "conversion", "event", "anonymous_collapse_failed", "request_id", ids.Request, "model", resolved, "source_protocol", upstreamRoute.Protocol, "error", err)
 				wire.WriteError(w, external, http.StatusBadGateway, "unsupported upstream response", "upstream_error", ids.Request)
 				return
 			}
@@ -267,10 +302,16 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 		if external != upstreamRoute.Protocol {
 			responseBody, err = wire.ConvertResponse(upstreamRoute.Protocol, external, responseBody)
 			if err != nil {
-				g.logger.Warn("response protocol conversion failed", "component", "conversion", "event", "response_conversion_failed", "request_id", ids.Request, "model", model, "source_protocol", upstreamRoute.Protocol, "target_protocol", external, "error", err)
+				g.logger.Warn("response protocol conversion failed", "component", "conversion", "event", "response_conversion_failed", "request_id", ids.Request, "model", resolved, "source_protocol", upstreamRoute.Protocol, "target_protocol", external, "error", err)
 				wire.WriteError(w, external, http.StatusBadGateway, "unsupported upstream response", "upstream_error", ids.Request)
 				return
 			}
+		}
+		// The client must see the name it asked for, whichever upstream served
+		// the request. A conversion above may have rebuilt the document from the
+		// upstream's model name, so this runs after it.
+		if aliased {
+			responseBody, _ = wire.RewriteResponseModel(responseBody, model)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
@@ -301,11 +342,20 @@ func (g *Gateway) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, "model is required", "invalid_request_error", "model")
 		return
 	}
-	if !g.catalog.Supported(model) {
+	// Aliases apply here too, so an operator's client-facing name works on
+	// every inference endpoint rather than only on the message-shaped ones.
+	resolved := g.cfg.ResolveModel(model)
+	aliased := resolved != model
+	if aliased {
+		if meta := telemetry.MetaFromRequest(r); meta != nil {
+			meta.Model, meta.ModelAlias = resolved, model
+		}
+	}
+	if !g.catalog.Supported(resolved) {
 		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, "the model uses an upstream protocol that opencode2api does not expose", "invalid_request_error", "model")
 		return
 	}
-	route, err := g.catalog.Route(model, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0, g.cfg.Anonymous)
+	route, err := g.catalog.Route(resolved, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0, g.cfg.Anonymous)
 	if err != nil {
 		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, err.Error(), "invalid_request_error", "model")
 		return
@@ -314,7 +364,17 @@ func (g *Gateway) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, fmt.Sprintf("the model does not use the %s protocol", wire.SystemOne), "invalid_request_error", "model")
 		return
 	}
-	g.forwardSystemOne(w, r, body, payload, model, route)
+	if aliased {
+		// The payload is relayed verbatim, so the real ID has to be written back.
+		payload["model"] = resolved
+		encoded, encodeErr := json.Marshal(payload)
+		if encodeErr != nil {
+			wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, "request contains unsupported JSON values", "invalid_request_error", "")
+			return
+		}
+		body = encoded
+	}
+	g.forwardSystemOne(w, r, body, payload, model, route, aliased)
 }
 
 // forwardSystemOne relays a System One decision payload verbatim to the
@@ -322,7 +382,10 @@ func (g *Gateway) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 // The payload pairs a free-form state with typed questions, which no
 // message-shaped upstream protocol accepts, so it is never translated. Answers
 // are non-streaming today; a streaming upstream reply is still relayed.
-func (g *Gateway) forwardSystemOne(w http.ResponseWriter, r *http.Request, body []byte, payload map[string]any, model string, route models.Route) {
+//
+// aliased marks a request that addressed the model through a configured alias;
+// it makes the relayed answer report the client's name instead of the real one.
+func (g *Gateway) forwardSystemOne(w http.ResponseWriter, r *http.Request, body []byte, payload map[string]any, model string, route models.Route, aliased bool) {
 	meta := telemetry.MetaFromRequest(r)
 	if meta != nil {
 		meta.Model = model
@@ -374,7 +437,11 @@ func (g *Gateway) forwardSystemOne(w http.ResponseWriter, r *http.Request, body 
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
+		source := io.Reader(resp.Body)
+		if aliased {
+			source = wire.NewModelRewriteReader(source, model)
+		}
+		_, _ = io.Copy(w, source)
 		return
 	}
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
@@ -384,6 +451,9 @@ func (g *Gateway) forwardSystemOne(w http.ResponseWriter, r *http.Request, body 
 	}
 	if usage, reported := wire.ResponseUsage(upstreamRoute.Protocol, responseBody); meta != nil {
 		meta.Usage, meta.UsageReported = usage, reported
+	}
+	if aliased {
+		responseBody, _ = wire.RewriteResponseModel(responseBody, model)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)

@@ -44,7 +44,12 @@ type bridgeStreamEvent struct {
 // TranscodeStream is the request-aware form used by the
 // gateway. A cancelled client must not receive a synthetic upstream error
 // after its connection has gone away.
-func TranscodeStream(ctx context.Context, w http.ResponseWriter, reader io.Reader, from, to Protocol, model string) (Usage, bool, error) {
+//
+// pinModel keeps the caller's model name authoritative for every emitted
+// frame. The gateway sets it when the client addressed the model through a
+// configured alias and therefore must see that alias rather than the real
+// upstream ID the request was routed to.
+func TranscodeStream(ctx context.Context, w http.ResponseWriter, reader io.Reader, from, to Protocol, model string, pinModel bool) (Usage, bool, error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return Usage{}, false, fmt.Errorf("response writer does not support streaming")
@@ -58,6 +63,9 @@ func TranscodeStream(ctx context.Context, w http.ResponseWriter, reader io.Reade
 		responseReasoning: map[string]bool{},
 	}
 	emitter := newBridgeStreamEmitter(w, flusher, to, model)
+	if pinModel {
+		emitter.PinModel()
+	}
 	termination := streamOpen
 	readErr := readSSE(reader, func(eventName, data string) error {
 		events, err := parser.Parse(eventName, data)

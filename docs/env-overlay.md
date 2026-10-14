@@ -92,6 +92,7 @@ Tất cả đều optional.
 | `O2A_RETRY_MAX_ATTEMPTS`     | `retry.max_attempts`            | Số nguyên                                                               | `3`                                                        |
 | `O2A_RETRY_TIMEOUT_SECONDS`  | `retry.timeout_seconds`         | Số (giây)                                                               | `300`                                                      |
 | `O2A_MODELS_REFRESH_SECONDS` | `models.refresh_seconds`        | Số nguyên, tối thiểu 1                                                  | `300`                                                      |
+| `O2A_MODEL_ALIASES`          | `models.aliases`                | **JSON object** `{"tên-client":"model-thật"}`; sai định dạng bị bỏ qua  | `{"gpt-5.5":"gpt-5.6"}`                                    |
 | `O2A_LOG_LEVEL`              | `logging.level`                 | `debug` / `info` / `warn` / `error`                                     | `info`                                                     |
 | `O2A_PREFER`                 | `prefer`                        | `go` / `zen`                                                            | `go`                                                       |
 | `O2A_REASONING_EFFORT`       | `reasoning.effort`              | `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `none`              | `high`                                                     |

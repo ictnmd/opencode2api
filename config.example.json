@@ -16,7 +16,8 @@
   },
   "models": {
     "refresh_seconds": 300,
-    "protocols": {}
+    "protocols": {},
+    "aliases": {}
   },
   "performance": {
     "max_idle_conns": 2048,

@@ -196,6 +196,20 @@ overlay_config() {
         fi
     }
 
+    # apply_json_object VAR PATH LABEL — the variable must already hold a JSON
+    # object. Validated here so a typo cannot replace the mapping with a string
+    # that Go would then reject at startup.
+    apply_json_object() { # VAR PATH LABEL
+        if o2a_raw=$(o2a_read "$1"); then
+            if printf '%s' "$o2a_raw" | jq -e 'type == "object"' >/dev/null 2>&1; then
+                patch_json "$2" "$o2a_raw"
+                note "override $3 ($(printf '%s' "$o2a_raw" | jq 'length' 2>/dev/null || printf '?') entries)"
+            else
+                warn "ignoring $1: expected a JSON object such as {\"alias\":\"real-model\"}"
+            fi
+        fi
+    }
+
     # Credentials.
     apply_list O2A_SERVER_KEYS '.server_keys' 'server_keys'
     apply_list O2A_ZEN_KEYS '.zen_keys' 'zen_keys'
@@ -222,6 +236,7 @@ overlay_config() {
     apply_int O2A_RETRY_MAX_ATTEMPTS '.retry.max_attempts' 'retry.max_attempts'
     apply_int O2A_RETRY_TIMEOUT_SECONDS '.retry.timeout_seconds' 'retry.timeout_seconds'
     apply_int O2A_MODELS_REFRESH_SECONDS '.models.refresh_seconds' 'models.refresh_seconds'
+    apply_json_object O2A_MODEL_ALIASES '.models.aliases' 'models.aliases'
     apply_str O2A_LOG_LEVEL '.logging.level' 'logging.level'
     apply_str O2A_PREFER '.prefer' 'prefer'
     apply_str O2A_REASONING_EFFORT '.reasoning.effort' 'reasoning.effort'

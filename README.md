@@ -222,6 +222,34 @@ The gateway refreshes Zen/Go `/v1/models` and OpenCode's [capability catalog](ht
 
 Allowed protocol values are `chat`, `responses`, and `anthropic`. Models using unsupported native protocols are filtered from discovery unless overridden.
 
+### Model aliases (rename a model in responses)
+
+`models.aliases` maps a client-facing name to the real model ID that serves it. The client sends the alias, the gateway routes to the real model, and the response reports **the name the client used** — in every frame of a stream and in the final document:
+
+```json
+{
+  "models": {
+    "aliases": {
+      "gpt-5.5": "gpt-5.6"
+    }
+  }
+}
+```
+
+With this configuration, `{"model":"gpt-5.5"}` is sent upstream as `gpt-5.6`, and the reply contains `"model":"gpt-5.5"`. The real ID stays addressable too: a request for `gpt-5.6` is answered with `gpt-5.6`. Aliases apply to `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and `/v1/systemone`, in both directions of protocol conversion.
+
+`/v1/models` lists each alias as its own entry carrying `"upstream_model"` with the real ID, so a discovery-driven client can address the model by the name you published. An alias that shadows a real model ID (an in-place rename) is listed once, not twice.
+
+Rules, all enforced at load time so a bad mapping fails startup instead of a request:
+
+- Aliases and targets are 1–128 characters of letters, digits, `.`, `_`, `-`, `:`, or `/`, starting with a letter or digit.
+- An alias may not map to itself, to another alias (no chains), or to a rotation group alias (`rotation.sota.alias` / `rotation.sweet.alias`).
+- An alias may not collide with a rotation group alias.
+
+Telemetry keeps both names: request logs record `model` (the real ID that served the request) and `model_alias` (the name the client used).
+
+### Cost, deprecation, and limits
+
 Cost, deprecation, and model limits come from the official [OpenCode metadata endpoint](https://models.opencode.ai/api.json), refreshed every 24 hours. OpenCode's capability catalog remains authoritative for context and token limits; metadata `limit.context`, `limit.input`, and `limit.output` fill fields missing from that catalog. These limits are exposed by `/v1/models` as `context_window`/`context_length`, `max_input`, and `max_output` for discovery clients such as CLIProxyAPI and Pi. Metadata requests use a 30-second timeout per HTTP client. Refresh failures retain existing data.
 
 ### Anonymous access and fallback
@@ -288,6 +316,7 @@ See [config.example.json](config.example.json) for a complete starting configura
 | `proxyfile`                 | Optional; relative paths resolve beside the configuration file.             |
 | `models.refresh_seconds`    | `300`; minimum 1.                                                           |
 | `models.protocols`          | `{}`; per-model native protocol overrides.                                  |
+| `models.aliases`            | `{}`; client-facing name → real model ID. Responses echo the client's name. |
 | `reasoning.effort`          | Empty (off); `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `none`. |
 | `reasoning.effort_by_model` | `{}`; per-model overrides of `reasoning.effort`.                            |
 

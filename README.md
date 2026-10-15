@@ -140,8 +140,9 @@ O2A_MODEL_ALIASES={"muse-spark-1.3":"muse-spark-1.3-contributor-free"}
 The client calls `muse-spark-1.3`; the gateway routes the request to the real
 `muse-spark-1.3-contributor-free`, and the response reports the name the client
 requested — in every stream frame and in the final document. The real ID stays
-addressable too, and `/v1/models` lists the alias with its `upstream_model`. See
-[Model aliases](#model-aliases-rename-a-model-in-responses) for the rules.
+addressable too, and `/v1/models` lists the alias as its own entry. See
+[Model aliases](#model-aliases-rename-a-model-in-responses) for the rules,
+including when the entry carries `upstream_model`.
 
 Other frequently used examples:
 
@@ -295,7 +296,7 @@ O2A_MODEL_ALIASES={"muse-spark-1.3":"muse-spark-1.3-contributor-free"}
 
 A client calling `muse-spark-1.3` is routed to the real `muse-spark-1.3-contributor-free`, and the reply reports `muse-spark-1.3`. The real ID stays addressable too: a request for `gpt-5.6` is answered with `gpt-5.6`. Aliases apply to `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and `/v1/systemone`, in both directions of protocol conversion.
 
-`/v1/models` lists each alias as its own entry carrying `"upstream_model"` with the real ID, so a discovery-driven client can address the model by the name you published. An alias that shadows a real model ID (an in-place rename) is listed once, not twice.
+`/v1/models` lists each alias as its own entry carrying `"upstream_model"` with the real ID, so a discovery-driven client can address the model by the name you published. An alias that shadows a real model ID (an in-place rename) is listed once, not twice. In that colliding case `"upstream_model"` is omitted, because the entry already reports the published name; the field appears only when the alias name differs from every real catalog ID. The `muse-spark-1.3` example above is exactly that case: `muse-spark-1.3` is itself a real model ID, so its single entry carries no `"upstream_model"`, while routing and response echoing still work as described.
 
 Rules, all enforced at load time so a bad mapping fails startup instead of a request:
 

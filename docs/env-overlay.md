@@ -171,6 +171,70 @@ Ngoài ra compose vẫn giữ các biến cũ (không thuộc overlay `jq`, mà 
 7. **File `.env` chứa secret** — không commit (đã có trong `.gitignore`), chỉ
    commit `.env.example` với placeholder.
 
+### Khôi phục khi giá trị sai đã bị ghi vào volume
+
+Overlay **ghi thẳng vào config runtime trên volume**
+(`/var/lib/opencode2api/config.json`), nên một giá trị chuỗi sai — hoặc một số
+nguyên vượt giới hạn `int` của Go — **vẫn nằm lại trong file** sau khi bạn bỏ biến
+khỏi `.env`. Lần start sau không còn gì để phủ lên, app Go đọc đúng giá trị cũ và
+**fail lúc start**, container crash-loop. Ví dụ `O2A_PREFER=bogus` để lại
+`"prefer": "bogus"`, log báo:
+
+```
+configuration error error="prefer must be \"zen\" or \"go\""
+```
+
+Số nguyên vượt giới hạn (ví dụ `O2A_LOGGING_RING_SIZE=99999999999999999999`) qua
+được bước kiểm tra chữ số của entrypoint nhưng bị Go từ chối khi unmarshal. Xem log
+để biết trường nào đang hỏng:
+
+```bash
+docker compose logs opencode2api
+```
+
+**Phải bỏ (hoặc sửa) biến sai trong `.env` trước.** Overlay chạy lại mỗi lần
+container start, nên nếu biến vẫn còn thì mọi chỉnh sửa file bên dưới sẽ bị ghi đè
+ngược lại giá trị sai. Sau đó chọn một trong ba cách:
+
+1. **Sửa/xoá đúng key trong file trên volume.** Khi container đang crash-loop,
+   `docker compose exec` **không dùng được** (báo
+   `is restarting, wait until the container is running`), nên dùng
+   `docker compose run`:
+
+   ```bash
+   # xoá key hỏng (đổi .prefer thành trường mà log chỉ ra)
+   docker compose run --rm --no-deps --entrypoint sh opencode2api -c \
+     'f=/var/lib/opencode2api/config.json; jq "del(.prefer)" "$f" > /tmp/c.json && cat /tmp/c.json > "$f" && chown opencode2api:opencode2api "$f" && chmod 600 "$f"'
+   ```
+
+   Key bị xoá sẽ quay về mặc định của app (`prefer` mặc định là `go`), nên cách này
+   dùng được cả khi bạn không nhớ giá trị hợp lệ.
+
+2. **Ghi đè bằng file đã sửa** (nếu đã có sẵn `config.json` đúng):
+
+   ```bash
+   docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
+   docker compose restart opencode2api
+   ```
+
+   `docker compose cp` chạy bằng root nên file có thể bị đổi chủ/mode; nếu app báo
+   `permission denied` khi đọc config, hãy trả lại quyền bằng
+   `chown opencode2api:opencode2api` + `chmod 600`.
+
+3. **Xoá volume để seed lại từ đầu** (mất toàn bộ state: config runtime, cache
+   model, rotation):
+
+   ```bash
+   docker compose down -v   # xoá luôn volume opencode2api_opencode2api-state
+   docker compose up -d
+   ```
+
+   Container seed lại từ `/app/config.example.json` trong image rồi áp `O2A_*` như
+   lần đầu.
+
+Gọn nhất là tránh hẳn tình huống này bằng cách đặt **giá trị hợp lệ** cho biến
+(`O2A_PREFER=go`): overlay sẽ ghi đè giá trị sai trong file, không cần sửa tay.
+
 ## Ví dụ deploy
 
 ### A. Anonymous lane + proxy direct, chỉ bằng `.env` (không sửa config.json)

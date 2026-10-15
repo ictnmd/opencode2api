@@ -112,7 +112,7 @@ docker compose up -d --build
 O2A_MODEL_ALIASES={"muse-spark-1.3":"muse-spark-1.3-contributor-free"}
 ```
 
-客户端调用 `muse-spark-1.3`，网关将请求路由到真实的 `muse-spark-1.3-contributor-free`，响应中返回客户端请求时使用的名称——流式响应的每一帧和最终文档都是如此。真实 ID 仍可直接调用，`/v1/models` 也会把别名连同其 `upstream_model` 一起列出。
+客户端调用 `muse-spark-1.3`，网关将请求路由到真实的 `muse-spark-1.3-contributor-free`，响应中返回客户端请求时使用的名称——流式响应的每一帧和最终文档都是如此。真实 ID 仍可直接调用，`/v1/models` 也会把别名单独列为一个条目。`upstream_model` 字段的出现条件见下文「模型别名」一节。
 
 其他常用示例：
 
@@ -263,7 +263,7 @@ O2A_MODEL_ALIASES={"muse-spark-1.3":"muse-spark-1.3-contributor-free"}
 
 此时 `{"model":"gpt-5.5"}` 会以 `gpt-5.6` 发往上游，而回复中仍为 `"model":"gpt-5.5"`；`muse-spark-1.3` 同理路由到 `muse-spark-1.3-contributor-free`。真实 ID 同样可调用：请求 `gpt-5.6` 时按原名返回。别名对 `/v1/chat/completions`、`/v1/responses`、`/v1/messages` 和 `/v1/systemone` 均生效，两个协议转换方向都支持。
 
-`/v1/models` 会把每个别名单独列为一个条目，并带上真实 ID 的 `"upstream_model"`，方便按已发布名称寻址的客户端。若别名与真实模型 ID 同名（原地重命名），只列出一次。
+`/v1/models` 会把每个别名单独列为一个条目，并带上真实 ID 的 `"upstream_model"`，方便按已发布名称寻址的客户端。若别名与真实模型 ID 同名（原地重命名），只列出一次。这种重名情况下 `"upstream_model"` 会被省略，因为该条目本身已经报告了发布名称；只有当别名与目录中所有真实模型 ID 都不同时才会出现该字段。上面的 `muse-spark-1.3` 正是这种情况：`muse-spark-1.3` 本身就是真实模型 ID，因此它的唯一条目不带 `"upstream_model"`，而路由与响应回显仍按前述方式工作。
 
 以下规则在加载配置时即校验，映射写错会在启动阶段失败而不是等到请求：
 

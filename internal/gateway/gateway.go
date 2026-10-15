@@ -195,7 +195,10 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			route, err = g.catalog.RouteForTier(resolved, override.Tier, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0)
 		}
 		if err != nil {
-			wire.WriteError(w, external, http.StatusBadRequest, err.Error(), "invalid_request_error", "model")
+			// A routing error names the model it rejected, and that name is the
+			// real ID. Report the name the client used instead, or an aliased
+			// request would learn the real upstream model from a 400.
+			wire.WriteError(w, external, http.StatusBadRequest, substituteModelName(err.Error(), model, resolved), "invalid_request_error", "model")
 			return
 		}
 		if meta != nil {
@@ -395,7 +398,9 @@ func (g *Gateway) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 	}
 	route, err := g.catalog.Route(resolved, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0, g.cfg.Anonymous)
 	if err != nil {
-		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, err.Error(), "invalid_request_error", "model")
+		// Same rule as the message endpoints: a rejected alias reports the name
+		// the client used, never the real upstream ID embedded in the error.
+		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, substituteModelName(err.Error(), model, resolved), "invalid_request_error", "model")
 		return
 	}
 	if route.Protocol != wire.SystemOne {
@@ -581,8 +586,60 @@ func copyErrorResponse(w http.ResponseWriter, protocol wire.Protocol, resp *http
 	if json.Unmarshal(body, &value) == nil {
 		message = jsonutil.FirstString(jsonutil.StringAt(value, "error", "message"), jsonutil.StringAt(value, "message"), message)
 	}
-	if clientModel != "" && realModel != "" && clientModel != realModel {
-		message = strings.ReplaceAll(message, realModel, clientModel)
-	}
+	message = substituteModelName(message, clientModel, realModel)
 	wire.WriteError(w, protocol, resp.StatusCode, message, "upstream_error", requestID)
+}
+
+// modelNameByte reports whether a byte can appear inside a model ID. Configured
+// names are letters, digits, dot, dash, underscore, colon or slash, so any other
+// byte delimits a whole name.
+func modelNameByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	}
+	switch b {
+	case '.', '_', ':', '/', '-':
+		return true
+	}
+	return false
+}
+
+// substituteModelName replaces whole occurrences of realModel with clientModel
+// in a client-visible message.
+//
+// Only whole names are replaced. A longer model ID that merely embeds the real
+// one — "muse-spark-1.3-contributor-free-pro" against a real ID of
+// "muse-spark-1.3-contributor-free" — must survive intact, otherwise the
+// message would name a model that does not exist. An empty or identical pair
+// leaves the message byte-identical, which keeps an unaliased request
+// unaffected. Every other byte is copied through unchanged.
+func substituteModelName(message, clientModel, realModel string) string {
+	if message == "" || clientModel == "" || realModel == "" || clientModel == realModel {
+		return message
+	}
+	if !strings.Contains(message, realModel) {
+		return message
+	}
+	var builder strings.Builder
+	builder.Grow(len(message))
+	for index := 0; index < len(message); {
+		offset := strings.Index(message[index:], realModel)
+		if offset < 0 {
+			builder.WriteString(message[index:])
+			break
+		}
+		start := index + offset
+		after := start + len(realModel)
+		builder.WriteString(message[index:start])
+		// The match is a whole name only when neither neighbour belongs to a
+		// model ID. A scan can land mid-name, so both sides are checked.
+		if start > 0 && modelNameByte(message[start-1]) || after < len(message) && modelNameByte(message[after]) {
+			builder.WriteString(realModel)
+		} else {
+			builder.WriteString(clientModel)
+		}
+		index = after
+	}
+	return builder.String()
 }

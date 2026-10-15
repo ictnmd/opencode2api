@@ -50,6 +50,108 @@ func TestRewriteResponseModelAnthropicAndResponses(t *testing.T) {
 	}
 }
 
+// museSparkAlias and museSparkModel are the exact pair from the operator
+// configuration, shared by the protocol tests below. The requested name is a
+// prefix of the real ID, so every assertion matches the quoted JSON value (with
+// its closing quote) rather than a bare substring.
+const (
+	museSparkAlias = "muse-spark-1.3"
+	museSparkModel = "muse-spark-1.3-contributor-free"
+)
+
+// The upstream document names the real model ID; the client must still see the
+// name it asked for, in every shape the three protocols use for it.
+func TestRewriteResponseModelMuseSparkAlias(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "chat top level",
+			body: `{"id":"chatcmpl-1","object":"chat.completion","model":"muse-spark-1.3-contributor-free","choices":[]}`,
+			want: `"model":"muse-spark-1.3"`,
+		},
+		{
+			name: "anthropic message",
+			body: `{"id":"msg_1","type":"message","role":"assistant","model":"muse-spark-1.3-contributor-free","content":[]}`,
+			want: `"model":"muse-spark-1.3"`,
+		},
+		{
+			name: "anthropic stream envelope",
+			body: `{"type":"message_start","message":{"id":"msg_1","model":"muse-spark-1.3-contributor-free","content":[]}}`,
+			want: `"model":"muse-spark-1.3"`,
+		},
+		{
+			name: "responses envelope",
+			body: `{"type":"response.completed","response":{"id":"resp_1","model":"muse-spark-1.3-contributor-free","output":[]}}`,
+			want: `"model":"muse-spark-1.3"`,
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			got, changed := RewriteResponseModel([]byte(test.body), museSparkAlias)
+			if !changed {
+				t.Fatal("expected the model field to change")
+			}
+			if !strings.Contains(string(got), test.want) {
+				t.Fatalf("want %s in %s", test.want, got)
+			}
+			if strings.Contains(string(got), museSparkModel) {
+				t.Fatalf("real model ID leaked to the client: %s", got)
+			}
+		})
+	}
+}
+
+// The same pair must survive the streaming rewrite, for each protocol's frame
+// shape, without disturbing frames that carry no model field.
+func TestModelRewriteReaderMuseSparkAlias(t *testing.T) {
+	cases := []struct {
+		name   string
+		frames string
+		want   int
+	}{
+		{
+			name: "chat",
+			frames: "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"model\":\"muse-spark-1.3-contributor-free\",\"choices\":[]}\n\n" +
+				"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"model\":\"muse-spark-1.3-contributor-free\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n" +
+				"data: [DONE]\n\n",
+			want: 2,
+		},
+		{
+			name: "anthropic",
+			frames: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"muse-spark-1.3-contributor-free\",\"content\":[]}}\n\n" +
+				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+			want: 1,
+		},
+		{
+			name: "responses",
+			frames: "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"muse-spark-1.3-contributor-free\",\"output\":[]}}\n\n" +
+				"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"muse-spark-1.3-contributor-free\",\"output\":[]}}\n\n",
+			want: 2,
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := io.ReadAll(NewModelRewriteReader(strings.NewReader(test.frames), museSparkAlias))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(got)
+			if strings.Contains(text, museSparkModel) {
+				t.Fatalf("real model ID leaked into the stream: %s", text)
+			}
+			if count := strings.Count(text, `"model":"muse-spark-1.3"`); count != test.want {
+				t.Fatalf("expected %d rewritten frames, got %d: %s", test.want, count, text)
+			}
+			if !strings.HasSuffix(text, "\n\n") {
+				t.Fatalf("frame delimiter lost: %q", text)
+			}
+		})
+	}
+}
+
 func TestRewriteResponseModelLeavesPayloadWithoutModel(t *testing.T) {
 	body := []byte(`{"type":"message_stop"}`)
 	got, changed := RewriteResponseModel(body, "alias")

@@ -229,6 +229,7 @@ overlay_config() {
     apply_bool O2A_ANONYMOUS '.anonymous' 'anonymous'
     apply_str O2A_UPSTREAM_ZEN '.upstream.zen' 'upstream.zen'
     apply_str O2A_UPSTREAM_GO '.upstream.go' 'upstream.go'
+    apply_str O2A_UPSTREAM_ANONYMOUS '.upstream.anonymous' 'upstream.anonymous'
     apply_list O2A_PROXIES '.proxies' 'proxies'
     apply_str O2A_PROXYFILE '.proxyfile' 'proxyfile'
 
@@ -237,10 +238,25 @@ overlay_config() {
     apply_int O2A_RETRY_TIMEOUT_SECONDS '.retry.timeout_seconds' 'retry.timeout_seconds'
     apply_int O2A_MODELS_REFRESH_SECONDS '.models.refresh_seconds' 'models.refresh_seconds'
     apply_json_object O2A_MODEL_ALIASES '.models.aliases' 'models.aliases'
+    apply_json_object O2A_MODELS_PROTOCOLS '.models.protocols' 'models.protocols'
     apply_bool O2A_MODELS_FREE_ONLY '.models.free_only' 'models.free_only'
     apply_str O2A_LOG_LEVEL '.logging.level' 'logging.level'
+    apply_int O2A_LOGGING_RING_SIZE '.logging.ring_size' 'logging.ring_size'
+    apply_bool O2A_LOGGING_DUMP_REQUEST_BODIES '.logging.dump_request_bodies' 'logging.dump_request_bodies'
     apply_str O2A_PREFER '.prefer' 'prefer'
     apply_str O2A_REASONING_EFFORT '.reasoning.effort' 'reasoning.effort'
+    apply_json_object O2A_REASONING_EFFORT_BY_MODEL '.reasoning.effort_by_model' 'reasoning.effort_by_model'
+
+    # HTTP connection pool and timeouts. The two attempt/first-event timeouts
+    # accept 0, which means "no timeout" and must stay a valid override.
+    apply_int O2A_PERFORMANCE_MAX_IDLE_CONNS '.performance.max_idle_conns' 'performance.max_idle_conns'
+    apply_int O2A_PERFORMANCE_MAX_IDLE_CONNS_PER_HOST '.performance.max_idle_conns_per_host' 'performance.max_idle_conns_per_host'
+    apply_int O2A_PERFORMANCE_MAX_CONNS_PER_HOST '.performance.max_conns_per_host' 'performance.max_conns_per_host'
+    apply_int O2A_PERFORMANCE_IDLE_CONN_TIMEOUT_SECONDS '.performance.idle_conn_timeout_seconds' 'performance.idle_conn_timeout_seconds'
+    apply_int O2A_PERFORMANCE_CONNECT_TIMEOUT_SECONDS '.performance.connect_timeout_seconds' 'performance.connect_timeout_seconds'
+    apply_int O2A_PERFORMANCE_FAILURE_COOLDOWN_SECONDS '.performance.failure_cooldown_seconds' 'performance.failure_cooldown_seconds'
+    apply_int O2A_PERFORMANCE_ATTEMPT_TIMEOUT_SECONDS '.performance.attempt_timeout_seconds' 'performance.attempt_timeout_seconds'
+    apply_int O2A_PERFORMANCE_FIRST_EVENT_TIMEOUT_SECONDS '.performance.first_event_timeout_seconds' 'performance.first_event_timeout_seconds'
 
     # Listeners. An explicit -listen / -web-listen flag already wins at
     # runtime, so the flag keeps priority when both are provided.
@@ -254,7 +270,10 @@ overlay_config() {
     # WebUI and rotation.
     apply_bool O2A_WEBUI_ENABLED '.webui.enabled' 'webui.enabled'
     apply_str O2A_WEBUI_USERNAME '.webui.username' 'webui.username'
+    apply_int O2A_WEBUI_SESSION_TTL_MINUTES '.webui.session_ttl_minutes' 'webui.session_ttl_minutes'
+    apply_str O2A_SOTA_ALIAS '.rotation.sota.alias' 'rotation.sota.alias'
     apply_list O2A_SOTA_ORDER '.rotation.sota.order' 'rotation.sota.order'
+    apply_str O2A_SWEET_ALIAS '.rotation.sweet.alias' 'rotation.sweet.alias'
     apply_list O2A_SWEET_ORDER '.rotation.sweet.order' 'rotation.sweet.order'
     apply_int O2A_FIRST_OUTPUT_SECONDS '.rotation.first_output_seconds' 'rotation.first_output_seconds'
 

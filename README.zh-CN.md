@@ -59,16 +59,20 @@ Windows 下使用 `Copy-Item config.example.json config.json` 复制配置，执
 
 ## Docker 部署
 
-已发布镜像：`ghcr.io/jasonxu114514/opencode2api`。
+`docker-compose.yml` **默认从本仓库源码本地构建镜像**（`build: context: . dockerfile: Dockerfile`），因为下文介绍的 `O2A_*` 环境变量覆盖层依赖本分支提供的 `jq` 入口脚本。仓库中只有这一个 compose 文件，不存在 `compose.yaml`。
+
+如需改用已发布镜像，请注释掉 `docker-compose.yml` 中的 `build:` 块，取消其 `image:` 行的注释，并把该镜像名改为你实际使用的仓库——上游项目发布的是 `ghcr.io/jasonxu114514/opencode2api`——同时把 `OPENCODE2API_VERSION` 固定为发行标签。此时 `docker compose up -d` 会直接拉取镜像而不再构建。已发布镜像不带 `O2A_*` 覆盖层，配置仍来自 `config.json`。
 
 ```bash
-cp config.example.json config.json
-# 启动前填写 Key，并替换 WebUI 密码。
-docker compose up -d
+cp .env.example .env
+# 在 .env 中填写 O2A_* 变量即可，无需 config.json：
+docker compose up -d --build
 docker compose logs -f
 ```
 
-Compose **仅在首次启动时**将宿主机配置导入 `opencode2api-state` 命名卷。后续建议通过 WebUI 修改配置。需要重新导入宿主机文件时：
+首次启动时，入口脚本会使用镜像内置的 `config.example.json` 初始化 `/var/lib/opencode2api/config.json`，再应用 `O2A_*` 覆盖层，因此全新克隆无需宿主机配置文件即可部署。
+
+Compose 只在你主动指定时才会导入宿主机配置。如果保留了编辑过的宿主机 `config.json`，请在容器运行后导入：
 
 ```bash
 docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
@@ -87,20 +91,57 @@ docker compose restart
 
 后两项在容器内对应 `LISTEN_ADDRESS` 与 `WEBUI_LISTEN_ADDRESS`。值为空时使用配置文件中的地址。首次初始化配置时，入口脚本会将示例 API 地址 `127.0.0.1:8080` 改为 `0.0.0.0:8080`，使其能够通过发布端口访问。
 
+### Docker 环境变量覆盖层（`O2A_*`）
+
+Compose 同时转发可选的 `O2A_*` 变量，入口脚本在**每次**启动时将它们合并到 `/var/lib/opencode2api/config.json`（留空或未设置表示保留 JSON 中的原值；`_FILE` 变体优先于普通变体）。覆盖范围包括 Key、上游地址、代理、重试 / 模型 / 日志设置、WebUI 凭据、轮转顺序和监听地址，因此可以只用 `.env` 完成部署：
+
+```bash
+cp .env.example .env   # 填写取值后：
+docker compose up -d --build
+```
+
+机制说明、完整变量表和部署示例见 [docs/env-overlay.md](docs/env-overlay.md)。注意：通过 WebUI 修改的字段会在下次重启时被 `O2A_*` 覆盖；直接运行二进制时 `O2A_*` 不生效（仍读取 `config.json`）。
+
+#### 完全通过 `.env` 配置
+
+[config.example.json](config.example.json) 中的每个字段都有对应的 `O2A_*` 变量，因此容器既不需要宿主机 `config.json`，也不需要绑定挂载。可从 [.env.example](.env.example) 起步，其中已列出每个变量的格式和示例值，并对照 [docs/env-overlay.md](docs/env-overlay.md) 的完整变量表确认含义。
+
+用 `models.aliases` 在不改动上游的前提下重命名模型：
+
+```dotenv
+O2A_MODEL_ALIASES={"muse-spark-1.3":"muse-spark-1.3-contributor-free"}
+```
+
+客户端调用 `muse-spark-1.3`，网关将请求路由到真实的 `muse-spark-1.3-contributor-free`，响应中返回客户端请求时使用的名称——流式响应的每一帧和最终文档都是如此。真实 ID 仍可直接调用，`/v1/models` 也会把别名连同其 `upstream_model` 一起列出。
+
+其他常用示例：
+
+```dotenv
+O2A_SERVER_KEYS=sk-local-aaa111
+O2A_ANONYMOUS=true
+O2A_UPSTREAM_ANONYMOUS=https://opencode.ai/inference
+O2A_MODELS_PROTOCOLS={"custom-model":"chat"}
+O2A_PERFORMANCE_FIRST_EVENT_TIMEOUT_SECONDS=15
+O2A_WEBUI_SESSION_TTL_MINUTES=720
+```
+
+入口脚本会在合并前校验取值：格式错误的 JSON 对象或非整数值会被忽略，并在容器日志中给出告警，原值保持不变。字符串、URL 或 `prefer` 取值写错则会被写入，随后由网关在启动时拒绝，因此修改 `.env` 后请检查 `docker compose logs opencode2api`。
+
 修改宿主机端口不会改变容器内监听地址。如果修改容器内 API 端口，还需要同步调整端口映射和镜像健康检查；默认健康检查使用 8080 端口。
 
-构建并运行本地镜像：
+不使用 compose、只构建本地镜像时（入口脚本同样会从镜像内置示例初始化，无需宿主机配置文件）：
 
 ```bash
 docker build -t opencode2api:local .
 docker volume create opencode2api-state
 docker run -d --name opencode2api \
   -p 8080:8080 -p 8081:8081 \
-  -e CONFIG_SEED_PATH=/run/config/opencode2api.json \
-  -v "$(pwd)/config.json:/run/config/opencode2api.json:ro" \
+  -e O2A_SERVER_KEYS=sk-local-aaa111 \
   -v opencode2api-state:/var/lib/opencode2api \
   opencode2api:local
 ```
+
+如需改用宿主机文件初始化该容器，请以只读方式挂载该文件，并将 `CONFIG_SEED_PATH` 指向挂载后的路径（文件必须在创建容器之前已存在）。
 
 在 Docker 中使用 `proxyfile` 时，代理文件也需要挂载到容器内配置指定的位置。
 
@@ -200,6 +241,38 @@ System One 将自由文本状态与类型化问题配对，并返回类型化答
 
 元数据给出价格时，`/v1/models` 的每个条目还会带上 `cost`（每百万 token 的美元价格：`input`、`output`、`cache_read`、`cache_write`，以及 OpenClaw 使用的 `cacheRead` / `cacheWrite`）。推理模型会在 `reasoning_efforts` 和 OpenClaw 读取的 `compat.supportedReasoningEfforts` 中列出可用档位：`minimal` 到 `max`；思考强度为 `auto` 时截止到探测得到的上限。强制或探测得到的档位通过 `default_reasoning_effort` 给出。缓存价格字段会在下一次元数据刷新后出现。
 
+### 模型别名（在响应中重命名模型）
+
+`models.aliases` 把客户端可见的名称映射到真正提供服务的模型 ID。客户端发送别名，网关路由到真实模型，响应中则报告**客户端使用的名称**——流式响应的每一帧和最终文档都是如此：
+
+```json
+{
+  "models": {
+    "aliases": {
+      "gpt-5.5": "gpt-5.6"
+    }
+  }
+}
+```
+
+例如在 `.env` 中：
+
+```dotenv
+O2A_MODEL_ALIASES={"muse-spark-1.3":"muse-spark-1.3-contributor-free"}
+```
+
+此时 `{"model":"gpt-5.5"}` 会以 `gpt-5.6` 发往上游，而回复中仍为 `"model":"gpt-5.5"`；`muse-spark-1.3` 同理路由到 `muse-spark-1.3-contributor-free`。真实 ID 同样可调用：请求 `gpt-5.6` 时按原名返回。别名对 `/v1/chat/completions`、`/v1/responses`、`/v1/messages` 和 `/v1/systemone` 均生效，两个协议转换方向都支持。
+
+`/v1/models` 会把每个别名单独列为一个条目，并带上真实 ID 的 `"upstream_model"`，方便按已发布名称寻址的客户端。若别名与真实模型 ID 同名（原地重命名），只列出一次。
+
+以下规则在加载配置时即校验，映射写错会在启动阶段失败而不是等到请求：
+
+- 别名与目标均为 1–128 个字符，可取字母、数字及 `.`、`_`、`-`、`:`、`/`，且以字母或数字开头。
+- 别名不能指向自身、不能指向另一个别名（不支持链式映射），也不能指向轮转分组别名（`rotation.sota.alias` / `rotation.sweet.alias`）。
+- 别名不能与轮转分组别名冲突。
+
+遥测会同时记录两个名称：请求日志中的 `model`（实际服务的真实 ID）与 `model_alias`（客户端使用的名称）。
+
 ### 匿名通道与回退
 
 启用 `anonymous: true` 后，满足以下任一条件的模型可以进入 Zen 匿名通道：
@@ -266,6 +339,7 @@ Key 初始化时均衡分配到代理。真实流量可以触发代理检查、K
 | `proxyfile`                 | 可选；相对路径基于配置文件所在目录解析。                                              |
 | `models.refresh_seconds`    | `300`；最小为 1。                                                                     |
 | `models.protocols`          | `{}`；按模型 ID 覆盖原生协议。                                                        |
+| `models.aliases`            | `{}`；客户端名称 → 真实模型 ID，响应返回客户端使用的名称。                            |
 | `models.free_only`          | `false`；即使配置了 Zen / Go Key，也只暴露和路由免费模型。                            |
 | `reasoning.effort`          | 空（关闭）；可选 `auto`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`none`。 |
 | `reasoning.effort_by_model` | `{}`；按模型 ID 覆盖 `reasoning.effort`。                                             |

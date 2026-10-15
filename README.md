@@ -59,10 +59,19 @@ The configuration directory must be writable for password migration, configurati
 
 ## Docker
 
-The upstream image is published as `ghcr.io/jasonxu114514/opencode2api`, but this
-repository's compose file builds locally by default, because the `O2A_*`
+`docker-compose.yml` builds the image **from this repository's local source by
+default** (`build: context: . dockerfile: Dockerfile`), because the `O2A_*`
 environment overlay described below needs the `jq`-based entrypoint shipped by
-this branch.
+this branch. This is the only compose file in the repository; there is no
+`compose.yaml`.
+
+To use a published image instead, comment out the `build:` block in
+`docker-compose.yml`, uncomment its `image:` line, and set that image name to the
+registry you consume — the upstream project publishes
+`ghcr.io/jasonxu114514/opencode2api`. Pin `OPENCODE2API_VERSION` to a release tag.
+`docker compose up -d` then pulls that image instead of building. A published
+image does not carry the `O2A_*` overlay, so configuration there comes from
+`config.json`.
 
 ```bash
 cp .env.example .env
@@ -75,7 +84,8 @@ On first start the entrypoint seeds `/var/lib/opencode2api/config.json` from the
 `config.example.json` bundled in the image, then applies the `O2A_*` overlay, so
 a fresh clone with no host configuration file deploys cleanly.
 
-Compose imports the host configuration into the `opencode2api-state` volume **only on first startup**. Subsequent changes should be made through the WebUI. To import an edited host configuration again:
+Compose imports a host configuration only if you ask it to. If you keep an
+edited `config.json` on the host, copy it in after the container is running:
 
 ```bash
 docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
@@ -113,20 +123,61 @@ variable table, and deploy examples. Note: fields managed through the WebUI are
 overwritten by `O2A_*` on the next restart, and `O2A_*` has no effect when
 running the binary directly (it still uses `config.json`).
 
+#### Configure entirely from `.env`
+
+Every field in [config.example.json](config.example.json) has an `O2A_*`
+equivalent, so a container needs no `config.json` on the host and no bind mount.
+Start from [.env.example](.env.example), which lists each variable with its
+format and an example value, and cross-check the meaning against the full table
+in [docs/env-overlay.md](docs/env-overlay.md).
+
+Rename a model without touching the upstream, using `models.aliases`:
+
+```dotenv
+O2A_MODEL_ALIASES={"muse-spark-1.3":"muse-spark-1.3-contributor-free"}
+```
+
+The client calls `muse-spark-1.3`; the gateway routes the request to the real
+`muse-spark-1.3-contributor-free`, and the response reports the name the client
+requested — in every stream frame and in the final document. The real ID stays
+addressable too, and `/v1/models` lists the alias with its `upstream_model`. See
+[Model aliases](#model-aliases-rename-a-model-in-responses) for the rules.
+
+Other frequently used examples:
+
+```dotenv
+O2A_SERVER_KEYS=sk-local-aaa111
+O2A_ANONYMOUS=true
+O2A_UPSTREAM_ANONYMOUS=https://opencode.ai/inference
+O2A_MODELS_PROTOCOLS={"custom-model":"chat"}
+O2A_PERFORMANCE_FIRST_EVENT_TIMEOUT_SECONDS=15
+O2A_WEBUI_SESSION_TTL_MINUTES=720
+```
+
+Values are validated by the entrypoint before they are merged: a malformed JSON
+object or a non-integer number is ignored with a warning in the container log,
+leaving the previous value in place. A wrong string, URL, or `prefer` value is
+written through and rejected later by the gateway at startup, so check
+`docker compose logs opencode2api` after changing `.env`.
+
 Changing host ports does not change container listeners. If you change the internal API port, also update the port mapping and the image health check, which uses port 8080.
 
-For a local image:
+For a local image without compose (the entrypoint still seeds from the bundled
+example, so no host configuration file is required):
 
 ```bash
 docker build -t opencode2api:local .
 docker volume create opencode2api-state
 docker run -d --name opencode2api \
   -p 8080:8080 -p 8081:8081 \
-  -e CONFIG_SEED_PATH=/run/config/opencode2api.json \
-  -v "$(pwd)/config.json:/run/config/opencode2api.json:ro" \
+  -e O2A_SERVER_KEYS=sk-local-aaa111 \
   -v opencode2api-state:/var/lib/opencode2api \
   opencode2api:local
 ```
+
+To seed that container from a host file instead, mount it read-only and point
+`CONFIG_SEED_PATH` at the mounted path (the file must exist before the container
+is created).
 
 A `proxyfile` used in Docker must also be available inside the container at the configured path.
 
@@ -236,7 +287,13 @@ Allowed protocol values are `chat`, `responses`, and `anthropic`. Models using u
 }
 ```
 
-With this configuration, `{"model":"gpt-5.5"}` is sent upstream as `gpt-5.6`, and the reply contains `"model":"gpt-5.5"`. The real ID stays addressable too: a request for `gpt-5.6` is answered with `gpt-5.6`. Aliases apply to `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and `/v1/systemone`, in both directions of protocol conversion.
+With this configuration, `{"model":"gpt-5.5"}` is sent upstream as `gpt-5.6`, and the reply contains `"model":"gpt-5.5"`. The same mapping can be set from the environment overlay:
+
+```dotenv
+O2A_MODEL_ALIASES={"muse-spark-1.3":"muse-spark-1.3-contributor-free"}
+```
+
+A client calling `muse-spark-1.3` is routed to the real `muse-spark-1.3-contributor-free`, and the reply reports `muse-spark-1.3`. The real ID stays addressable too: a request for `gpt-5.6` is answered with `gpt-5.6`. Aliases apply to `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and `/v1/systemone`, in both directions of protocol conversion.
 
 `/v1/models` lists each alias as its own entry carrying `"upstream_model"` with the real ID, so a discovery-driven client can address the model by the name you published. An alias that shadows a real model ID (an in-place rename) is listed once, not twice.
 

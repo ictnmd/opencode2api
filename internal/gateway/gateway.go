@@ -273,7 +273,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 		}
 		w.Header().Set("x-request-id", ids.Request)
 		if resp.StatusCode/100 != 2 {
-			copyErrorResponse(w, external, resp, ids.Request)
+			copyErrorResponse(w, external, resp, ids.Request, model, resolved)
 			return
 		}
 		if stream {
@@ -481,7 +481,9 @@ func (g *Gateway) forwardSystemOne(w http.ResponseWriter, r *http.Request, body 
 	}
 	w.Header().Set("x-request-id", ids.Request)
 	if resp.StatusCode/100 != 2 {
-		copyErrorResponse(w, wire.SystemOne, resp, ids.Request)
+		// route.ID is the real upstream model ID; model is the name the client
+		// used, which differs only for a configured alias.
+		copyErrorResponse(w, wire.SystemOne, resp, ids.Request, model, route.ID)
 		return
 	}
 	if contentType := resp.Header.Get("Content-Type"); strings.HasPrefix(contentType, "text/event-stream") {
@@ -562,7 +564,14 @@ func (g *Gateway) prepareRouteBodies(from wire.Protocol, route models.Route, inp
 	return bodies, nil
 }
 
-func copyErrorResponse(w http.ResponseWriter, protocol wire.Protocol, resp *http.Response, requestID string) {
+// copyErrorResponse relays an upstream error to the client.
+//
+// An aliased request must not learn the real upstream model ID from the
+// upstream's own error text: a rejection routinely names the model it was asked
+// for, and that text is forwarded as the client-visible message. The name the
+// client used is therefore substituted for the real ID, exactly as it is in a
+// successful reply. A request that named the real ID directly is unaffected.
+func copyErrorResponse(w http.ResponseWriter, protocol wire.Protocol, resp *http.Response, requestID, clientModel, realModel string) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
 		w.Header().Set("Retry-After", retryAfter)
@@ -571,6 +580,9 @@ func copyErrorResponse(w http.ResponseWriter, protocol wire.Protocol, resp *http
 	var value map[string]any
 	if json.Unmarshal(body, &value) == nil {
 		message = jsonutil.FirstString(jsonutil.StringAt(value, "error", "message"), jsonutil.StringAt(value, "message"), message)
+	}
+	if clientModel != "" && realModel != "" && clientModel != realModel {
+		message = strings.ReplaceAll(message, realModel, clientModel)
 	}
 	wire.WriteError(w, protocol, resp.StatusCode, message, "upstream_error", requestID)
 }

@@ -150,6 +150,7 @@ function fillConfig(value) {
   $("#c-refresh").value = value.models.refresh_seconds;
   $("#c-protocols").value = JSON.stringify(value.models.protocols || {}, null, 2);
   $("#c-aliases").value = JSON.stringify(value.models.aliases || {}, null, 2);
+  $("#c-free-only").checked = !!value.models.free_only;
   const reasoning = value.reasoning || {};
   $("#c-reasoning-effort").value = reasoning.effort || "";
   $("#c-reasoning-by-model").value = JSON.stringify(reasoning.effort_by_model || {}, null, 2);
@@ -217,6 +218,7 @@ $("#config-form").addEventListener("submit", async (event) => {
         refresh_seconds: number("#c-refresh"),
         protocols: JSON.parse($("#c-protocols").value || "{}"),
         aliases: JSON.parse($("#c-aliases").value || "{}"),
+        free_only: $("#c-free-only").checked,
       },
       reasoning: {
         effort: $("#c-reasoning-effort").value,
@@ -1110,6 +1112,9 @@ function renderAPIKeys(keys) {
     appendCell(row, key.name);
     appendCell(row, key.display, "mono");
     appendCell(row, key.enabled ? "已启用" : "已停用", key.enabled ? "status ok" : "status warn");
+    const usage = key.usage || {},
+      summary = (value = {}) => `${formatTokens(value.requests)} 次 · ${formatTokens(value.total_tokens)} tokens`;
+    appendCell(row, `${summary(usage.last_hour)} / ${summary(usage.lifetime)}`);
     appendCell(row, key.created_at ? localTime(key.created_at) : "已有配置");
     const cell = document.createElement("td"),
       actions = document.createElement("div");
@@ -1144,7 +1149,7 @@ function renderAPIKeys(keys) {
     row.appendChild(cell);
     host.appendChild(row);
   }
-  if (!keys.length) emptyRow(host, 5, "暂无 API Key");
+  if (!keys.length) emptyRow(host, 6, "暂无 API Key");
 }
 $("#api-key-form").onsubmit = async (event) => {
   event.preventDefault();

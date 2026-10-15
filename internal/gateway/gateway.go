@@ -426,7 +426,14 @@ func (g *Gateway) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) forwardSystemOne(w http.ResponseWriter, r *http.Request, body []byte, payload map[string]any, model string, route models.Route, aliased bool) {
 	meta := telemetry.MetaFromRequest(r)
 	if meta != nil {
-		meta.Model = model
+		// Telemetry must report the model that actually served the request.
+		// route.ID is the real upstream model ID, whereas model is the name
+		// the client used, which differs only for a configured alias and is
+		// already recorded in meta.ModelAlias by the caller. Assigning model
+		// here overwrote the resolved ID, so the SystemOne lane disagreed
+		// with every other lane and with the per-session burn and
+		// per-server-key usage accounting.
+		meta.Model = route.ID
 		meta.Tier = string(route.Tier)
 		meta.Protocol = route.Protocol
 	}

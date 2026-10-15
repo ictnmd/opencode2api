@@ -237,6 +237,7 @@ overlay_config() {
     apply_int O2A_RETRY_TIMEOUT_SECONDS '.retry.timeout_seconds' 'retry.timeout_seconds'
     apply_int O2A_MODELS_REFRESH_SECONDS '.models.refresh_seconds' 'models.refresh_seconds'
     apply_json_object O2A_MODEL_ALIASES '.models.aliases' 'models.aliases'
+    apply_bool O2A_MODELS_FREE_ONLY '.models.free_only' 'models.free_only'
     apply_str O2A_LOG_LEVEL '.logging.level' 'logging.level'
     apply_str O2A_PREFER '.prefer' 'prefer'
     apply_str O2A_REASONING_EFFORT '.reasoning.effort' 'reasoning.effort'

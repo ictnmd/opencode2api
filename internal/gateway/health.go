@@ -141,72 +141,7 @@ func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request) {
 	routes, _ := g.availableModels()
 	data := make([]map[string]any, 0, len(routes))
 	for _, route := range routes {
-		model := route.ID
-		// Tier-scoped metadata: the advertised context window must match
-		// the tier that will serve the request (anonymous ⇒ Zen).
-		md := g.catalog.MetadataForTier(model, route.Tier)
-		entry := map[string]any{
-			"id": model, "object": "model", "created": now, "owned_by": "opencode",
-			"metadata":        md,
-			"native_protocol": route.Protocol,
-		}
-		if route.Protocol == wire.SystemOne {
-			entry["supported_endpoints"] = []string{"/v1/systemone"}
-		} else {
-			entry["supported_endpoints"] = []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"}
-		}
-		// Top-level OpenAI-standard fields: discovery clients (jcode, Pi, …)
-		// read context/reasoning at the top level of each model entry.
-		if md.ContextWindow > 0 {
-			entry["context_window"] = md.ContextWindow
-			entry["context_length"] = md.ContextWindow
-		}
-		if md.MaxInput > 0 {
-			entry["max_input"] = md.MaxInput
-		}
-		if md.MaxOutput > 0 {
-			entry["max_output"] = md.MaxOutput
-		}
-		if md.Reasoning {
-			entry["reasoning"] = true
-			entry["supports_reasoning"] = true
-			efforts := g.reasoningEfforts(model, route)
-			entry["reasoning_efforts"] = efforts
-			// OpenClaw and similar harnesses read effort levels from compat
-			// rather than inferring them, and otherwise offer only off/max.
-			entry["compat"] = map[string]any{"supportsReasoningEffort": true, "supportedReasoningEfforts": efforts}
-			if effort := g.resolvedEffort(model, route.Tier, route.Protocol); effort != "" && effort != "none" {
-				entry["default_reasoning_effort"] = effort
-			}
-		}
-		if md.Cost != nil {
-			cost := map[string]any{}
-			// Camel-case aliases match OpenClaw's model cost shape.
-			for _, field := range []struct {
-				names []string
-				value *float64
-			}{
-				{[]string{"input"}, md.Cost.Input},
-				{[]string{"output"}, md.Cost.Output},
-				{[]string{"cache_read", "cacheRead"}, md.Cost.CacheRead},
-				{[]string{"cache_write", "cacheWrite"}, md.Cost.CacheWrite},
-			} {
-				if field.value == nil {
-					continue
-				}
-				for _, name := range field.names {
-					cost[name] = *field.value
-				}
-			}
-			entry["cost"] = cost
-		}
-		if md.ToolCall {
-			entry["tool_call"] = true
-		}
-		if md.StructuredOutput {
-			entry["structured_output"] = true
-		}
-		data = append(data, entry)
+		data = append(data, g.modelEntry(route.ID, route.ID, route, now, ""))
 	}
 	for _, group := range g.rotation.Snapshot().Groups {
 		if g.goNodes.Len() == 0 {
@@ -228,6 +163,85 @@ func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }
 
+// modelEntry renders one /v1/models entry. id is the name the client sees and
+// model is the real upstream model whose metadata and routing describe it; the
+// two differ only for a configured alias. upstreamModel, when non-empty, is
+// exposed as upstream_model so the indirection stays visible.
+//
+// Both the real-model and the alias path go through here on purpose: an alias
+// must advertise exactly what the model it points at advertises, or a
+// discovery-driven client sees a second-class model.
+func (g *Gateway) modelEntry(id, model string, route modelcatalog.Route, now int64, upstreamModel string) map[string]any {
+	// Tier-scoped metadata: the advertised context window must match
+	// the tier that will serve the request (anonymous ⇒ Zen).
+	md := g.catalog.MetadataForTier(model, route.Tier)
+	entry := map[string]any{
+		"id": id, "object": "model", "created": now, "owned_by": "opencode",
+		"metadata":        md,
+		"native_protocol": route.Protocol,
+	}
+	if upstreamModel != "" {
+		entry["upstream_model"] = upstreamModel
+	}
+	if route.Protocol == wire.SystemOne {
+		entry["supported_endpoints"] = []string{"/v1/systemone"}
+	} else {
+		entry["supported_endpoints"] = []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"}
+	}
+	// Top-level [OI]-standard fields: discovery clients (jcode, Pi, …)
+	// read context/reasoning at the top level of each model entry.
+	if md.ContextWindow > 0 {
+		entry["context_window"] = md.ContextWindow
+		entry["context_length"] = md.ContextWindow
+	}
+	if md.MaxInput > 0 {
+		entry["max_input"] = md.MaxInput
+	}
+	if md.MaxOutput > 0 {
+		entry["max_output"] = md.MaxOutput
+	}
+	if md.Reasoning {
+		entry["reasoning"] = true
+		entry["supports_reasoning"] = true
+		efforts := g.reasoningEfforts(model, route)
+		entry["reasoning_efforts"] = efforts
+		// OpenClaw and similar harnesses read effort levels from compat
+		// rather than inferring them, and otherwise offer only off/max.
+		entry["compat"] = map[string]any{"supportsReasoningEffort": true, "supportedReasoningEfforts": efforts}
+		if effort := g.resolvedEffort(model, route.Tier, route.Protocol); effort != "" && effort != "none" {
+			entry["default_reasoning_effort"] = effort
+		}
+	}
+	if md.Cost != nil {
+		cost := map[string]any{}
+		// Camel-case aliases match OpenClaw's model cost shape.
+		for _, field := range []struct {
+			names []string
+			value *float64
+		}{
+			{[]string{"input"}, md.Cost.Input},
+			{[]string{"output"}, md.Cost.Output},
+			{[]string{"cache_read", "cacheRead"}, md.Cost.CacheRead},
+			{[]string{"cache_write", "cacheWrite"}, md.Cost.CacheWrite},
+		} {
+			if field.value == nil {
+				continue
+			}
+			for _, name := range field.names {
+				cost[name] = *field.value
+			}
+		}
+		entry["cost"] = cost
+	}
+	if md.ToolCall {
+		entry["tool_call"] = true
+	}
+	if md.StructuredOutput {
+		entry["structured_output"] = true
+	}
+	return entry
+}
+
 // aliasModelEntries advertises configured model aliases so a discovery-driven
 // client can pick one up and address the model by the name the operator chose.
 // An alias whose real model is not currently routable is omitted, exactly like
@@ -236,6 +250,10 @@ func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request) {
 //
 // An alias that shadows a real model ID (a deliberate in-place rename) is not
 // listed twice: the real entry already advertises that name.
+//
+// Routing the alias target through catalog.Route also keeps discovery
+// consistent with models.free_only: an alias pointing at a paid model is
+// hidden here for the same reason the model itself is.
 func (g *Gateway) aliasModelEntries(now int64, existing []map[string]any) []map[string]any {
 	aliases := g.cfg.Models.Aliases
 	if len(aliases) == 0 {
@@ -261,39 +279,7 @@ func (g *Gateway) aliasModelEntries(now int64, existing []map[string]any) []map[
 		if err != nil {
 			continue
 		}
-		md := g.catalog.MetadataForTier(model, route.Tier)
-		entry := map[string]any{
-			"id": alias, "object": "model", "created": now, "owned_by": "opencode",
-			"metadata":        md,
-			"native_protocol": route.Protocol,
-			"upstream_model":  model,
-		}
-		if route.Protocol == wire.SystemOne {
-			entry["supported_endpoints"] = []string{"/v1/systemone"}
-		} else {
-			entry["supported_endpoints"] = []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"}
-		}
-		if md.ContextWindow > 0 {
-			entry["context_window"] = md.ContextWindow
-			entry["context_length"] = md.ContextWindow
-		}
-		if md.MaxInput > 0 {
-			entry["max_input"] = md.MaxInput
-		}
-		if md.MaxOutput > 0 {
-			entry["max_output"] = md.MaxOutput
-		}
-		if md.Reasoning {
-			entry["reasoning"] = true
-			entry["supports_reasoning"] = true
-		}
-		if md.ToolCall {
-			entry["tool_call"] = true
-		}
-		if md.StructuredOutput {
-			entry["structured_output"] = true
-		}
-		entries = append(entries, entry)
+		entries = append(entries, g.modelEntry(alias, model, route, now, model))
 	}
 	return entries
 }

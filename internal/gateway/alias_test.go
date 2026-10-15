@@ -13,11 +13,11 @@ import (
 	"opencode2api/internal/telemetry"
 )
 
-// aliasTestGateway builds a gateway whose only upstream is the supplied test
+// testGateway builds a gateway whose only upstream is the supplied test
 // server, reached directly through the Go key tier. Catalog discovery is
 // deliberately empty so the configured key alone decides routability, exactly
 // as it does before the first refresh.
-func aliasTestGateway(t *testing.T, upstreamURL string, aliases map[string]string) *Gateway {
+func testGateway(t *testing.T, upstreamURL string, models config.ModelsConfig) *Gateway {
 	t.Helper()
 	cfg := config.Config{
 		Listen:     "127.0.0.1:0",
@@ -26,7 +26,7 @@ func aliasTestGateway(t *testing.T, upstreamURL string, aliases map[string]strin
 		Proxies:    []string{"direct"},
 		Upstream:   config.UpstreamConfig{Zen: upstreamURL, Go: upstreamURL},
 		Retry:      config.RetryConfig{MaxAttempts: 1, TimeoutSeconds: 30},
-		Models:     config.ModelsConfig{RefreshSeconds: 300, Protocols: map[string]string{}, Aliases: aliases},
+		Models:     models,
 		Performance: config.PerformanceConfig{
 			MaxIdleConns: 8, MaxIdleConnsPerHost: 8, IdleConnTimeoutSeconds: 30,
 			ConnectTimeoutSeconds: 5, FailureCooldownSeconds: 15,
@@ -43,6 +43,27 @@ func aliasTestGateway(t *testing.T, upstreamURL string, aliases map[string]strin
 		t.Fatalf("new gateway: %v", err)
 	}
 	return gateway
+}
+
+// aliasTestGateway is the aliases-only shorthand the alias tests need.
+func aliasTestGateway(t *testing.T, upstreamURL string, aliases map[string]string) *Gateway {
+	t.Helper()
+	return testGateway(t, upstreamURL, config.ModelsConfig{
+		RefreshSeconds: 300, Protocols: map[string]string{}, Aliases: aliases,
+	})
+}
+
+// getModelList fetches /v1/models and returns the raw body.
+func getModelList(t *testing.T, gateway *Gateway) string {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request.Header.Set("Authorization", "Bearer sk-test")
+	recorder := httptest.NewRecorder()
+	gateway.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	return recorder.Body.String()
 }
 
 func postInference(t *testing.T, gateway *Gateway, path, body string) *httptest.ResponseRecorder {

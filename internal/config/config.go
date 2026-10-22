@@ -16,6 +16,14 @@ import (
 	wire "opencode2api/internal/protocol"
 )
 
+// Config is the service configuration stored in config.json.
+//
+// ServerKeys are the local keys clients present to the gateway; ZenKeys and
+// GoKeys are the upstream keys of the two keyed tiers, and Anonymous enables
+// the keyless free tier. Proxies lists the configured proxy entries; the
+// entries read from ProxyFile join them only in the resolved list that
+// RuntimeProxies returns, which is never saved. Prefer picks the keyed tier
+// that is tried first when both serve a model.
 type Config struct {
 	Rotation          RotationConfig               `json:"rotation"`
 	Listen            string                       `json:"listen"`
@@ -42,9 +50,12 @@ type Config struct {
 //
 // Effort is the default for every model; EffortByModel overrides it for the
 // model IDs it names. A level a client sends explicitly (Anthropic's
-// output_config.effort / top-level effort, or Chat's reasoning_effort) always
-// wins, so a forced level only replaces a value that would otherwise have been
-// derived from thinking.budget_tokens or left unset.
+// output_config.effort / top-level effort, Chat's reasoning_effort, or
+// Responses' reasoning.effort) always wins, so a forced level only replaces a
+// value that would otherwise have been derived from thinking.budget_tokens or
+// left unset. Besides the levels themselves, "none" strips reasoning from the
+// request, and "auto" applies, for free models on the Zen tier only, the
+// highest level the availability probe found the model to accept.
 type ReasoningConfig struct {
 	// omitempty keeps a saved configuration free of the fields the operator
 	// never set, matching how the rest of the optional surface is persisted.
@@ -52,20 +63,38 @@ type ReasoningConfig struct {
 	EffortByModel map[string]string `json:"effort_by_model,omitempty"`
 }
 
+// UpstreamConfig holds the base URLs of the OpenCode origins. The gateway
+// picks the request shape from the base URL (models.IsV1Upstream): one ending
+// in /zen is the v1 lane, any other a v2 lane.
 type UpstreamConfig struct {
+	// Zen is the base URL of the keyed Zen tier. Its default,
+	// https://opencode.ai/zen, is the v1 lane, which expects the OpenCode 1.x
+	// client request shape.
 	Zen string `json:"zen"`
-	Go  string `json:"go"`
-	// Anonymous is the base URL used by the keyless free-tier lane. Upstream
-	// moved keyless inference off /zen onto its own host, so the anonymous lane
-	// no longer shares the Zen base with the keyed lanes.
+	// Go is the base URL of the keyed Go plan tier. Its default,
+	// https://opencode.ai/zen/go, is a v2 lane, which expects the OpenCode 2.x
+	// CLI shape. The WebUI also reads the plan's quota from its /v1/usage.
+	Go string `json:"go"`
+	// Anonymous is the v2 /inference origin of the keyless free tier. The
+	// anonymous lane tries this origin first and falls back to the v1 /zen
+	// origin (models.V1Base, not Zen), which is the only upstream used when
+	// this one equals the v1 origin. Empty means https://opencode.ai/inference.
 	Anonymous string `json:"anonymous"`
 }
 
+// RetryConfig bounds the upstream retries. MaxAttempts caps the attempts of a
+// retry loop: the keyed attempts of a client request outside the rotation
+// path, and the catalog refresh. For the anonymous lane it is instead a floor
+// for how many rotating proxies may be drawn. TimeoutSeconds is the deadline
+// of the whole client request, retries included.
 type RetryConfig struct {
 	MaxAttempts    int `json:"max_attempts"`
 	TimeoutSeconds int `json:"timeout_seconds"`
 }
 
+// ModelsConfig controls model discovery and routing. RefreshSeconds is the
+// catalog refresh interval, and Protocols maps a model ID to the wire protocol
+// used upstream, overriding the one the catalog reports.
 type ModelsConfig struct {
 	RefreshSeconds int               `json:"refresh_seconds"`
 	Protocols      map[string]string `json:"protocols"`
@@ -77,8 +106,50 @@ type ModelsConfig struct {
 	// FreeOnly limits discovery and routing to free models, even when Zen or
 	// Go keys could serve paid ones. Free models may still fall back to keys.
 	FreeOnly bool `json:"free_only"`
+	// AnonymousBackoff configures a circuit breaker for the keyless lane:
+	// after Threshold consecutive failed attempts, or when every exit is under
+	// the free tier's IP block, the lane pauses for BaseHours, doubling on
+	// every further trip up to MaxHours. An absent block leaves the lane
+	// unpaused, which is the previous behavior.
+	AnonymousBackoff *AnonymousBackoffConfig `json:"anonymous_backoff,omitempty"`
 }
 
+// AnonymousBackoffConfig tunes the keyless lane's circuit breaker. Zero fields
+// take the defaults shown in Normalize.
+type AnonymousBackoffConfig struct {
+	Threshold int `json:"threshold,omitempty"`
+	BaseHours int `json:"base_hours,omitempty"`
+	MaxHours  int `json:"max_hours,omitempty"`
+}
+
+// Normalize fills the defaults and rejects nonsensical windows.
+func (b *AnonymousBackoffConfig) Normalize() error {
+	if b == nil {
+		return nil
+	}
+	if b.Threshold == 0 {
+		b.Threshold = 6
+	}
+	if b.BaseHours == 0 {
+		b.BaseHours = 1
+	}
+	if b.MaxHours == 0 {
+		b.MaxHours = 24
+	}
+	if b.Threshold < 1 {
+		return errors.New("models.anonymous_backoff.threshold must be at least 1")
+	}
+	if b.BaseHours < 1 {
+		return errors.New("models.anonymous_backoff.base_hours must be at least 1")
+	}
+	if b.MaxHours < b.BaseHours {
+		return errors.New("models.anonymous_backoff.max_hours must not be smaller than base_hours")
+	}
+	return nil
+}
+
+// LoggingConfig sets the minimum log level (debug, info, warn or error) and
+// RingSize, the number of recent log events kept in memory for the WebUI.
 type LoggingConfig struct {
 	Level    string `json:"level"`
 	RingSize int    `json:"ring_size"`
@@ -88,6 +159,11 @@ type LoggingConfig struct {
 	DumpRequestBodies bool `json:"dump_request_bodies"`
 }
 
+// WebUIConfig configures the management WebUI. Password is a plaintext
+// password supplied only to set one: it is hashed into PasswordHash and
+// cleared before the configuration is saved. SessionTTLMinutes is the
+// lifetime of a login session. Changes to Enabled and Listen take effect only
+// after a restart.
 type WebUIConfig struct {
 	Enabled           bool   `json:"enabled"`
 	Listen            string `json:"listen"`
@@ -97,6 +173,14 @@ type WebUIConfig struct {
 	SessionTTLMinutes int    `json:"session_ttl_minutes"`
 }
 
+// PerformanceConfig tunes the shared upstream transports and failure
+// handling: the connection pool limits (MaxConnsPerHost 0 means unlimited),
+// the dial timeout, the base cooldown after an upstream key or anonymous
+// proxy fails, and the per-attempt and first-event timeouts.
+// AttemptTimeoutSeconds 0 leaves only the request-level timeout in place,
+// FirstEventTimeoutSeconds 0 disables the first-event wait, MaxAnonymousExits
+// 0 uses the built-in cap, and FreeTierBlockSeconds 0 uses the built-in
+// cool-down for an exit the free tier flagged.
 type PerformanceConfig struct {
 	MaxIdleConns             int `json:"max_idle_conns"`
 	MaxIdleConnsPerHost      int `json:"max_idle_conns_per_host"`
@@ -106,21 +190,33 @@ type PerformanceConfig struct {
 	FailureCooldownSeconds   int `json:"failure_cooldown_seconds"`
 	AttemptTimeoutSeconds    int `json:"attempt_timeout_seconds"`
 	FirstEventTimeoutSeconds int `json:"first_event_timeout_seconds"`
+	// MaxAnonymousExits bounds how many distinct static proxy exits one
+	// anonymous request may walk. Each exit may still try the v2 /inference
+	// lane and the v1 /zen lane, so the upstream request count can be twice
+	// this value; a rotating #pool entry is drawn once per retry.max_attempts
+	// instead.
+	MaxAnonymousExits int `json:"max_anonymous_exits"`
+	// FreeTierBlockSeconds is how long an exit the free tier flagged as
+	// abusive stays out of the anonymous cursor. Upstream does not publish
+	// the block duration, so the default is a conservative 15 minutes.
+	FreeTierBlockSeconds int `json:"free_tier_block_seconds"`
 }
 
-// AttemptTimeout bounds how long a single upstream attempt may wait for
-// response headers before it is abandoned and the next node is tried. Values
-// <= 0 keep the historical behavior of using the request-level retry timeout,
-// so existing configs are unaffected. The result never exceeds requestTimeout.
-// It bounds the whole attempt up to the response being released (dial, request
-// write, headers and, when enabled, the first SSE event); an established
-// stream keeps flowing under the request-level timeout.
+// AttemptTimeout returns the bound for a single upstream attempt. When
+// attempt_timeout_seconds is positive the result is that setting, capped at
+// requestTimeout only when requestTimeout is positive. Otherwise the result is
+// requestTimeout unchanged, so a config without the setting keeps using the
+// request-level retry timeout.
 //
-// The bound is installed on the shared transports as the header wait and on
-// each attempt's context, so it covers every attempt in both the anonymous and
-// the authenticated loops. Without it, one hung exit can consume the entire
-// request budget by itself, and the attempts that follow are fired against an
-// already-expired context.
+// The gateway installs the result on the shared transports as the
+// response-header wait. When the setting is positive, the inference attempts
+// except /systemone also arm it as a context deadline (the rotation path keeps
+// only the header wait, since it has its own first-output timer), covering the
+// whole attempt up to the response being released (dial, request write,
+// headers and, when enabled, the first SSE event); an established stream
+// keeps flowing under the request-level timeout. Without that deadline, one
+// hung exit can consume the entire request budget by itself, and the attempts
+// that follow are fired against an already-expired context.
 func (cfg PerformanceConfig) AttemptTimeout(requestTimeout time.Duration) time.Duration {
 	if cfg.AttemptTimeoutSeconds > 0 {
 		attempt := time.Duration(cfg.AttemptTimeoutSeconds) * time.Second
@@ -132,6 +228,10 @@ func (cfg PerformanceConfig) AttemptTimeout(requestTimeout time.Duration) time.D
 	return requestTimeout
 }
 
+// Load reads the config file at path, strips its // and /* */ comments, and
+// decodes it over the built-in defaults. Decoding is strict: unknown fields
+// and anything after the first JSON value are errors. The result is then
+// checked by Normalize.
 func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -163,15 +263,21 @@ func Load(path string) (Config, error) {
 }
 
 // Normalize resolves external inputs and validates a Config supplied by
-// either the JSON file or the authenticated management API.
+// either the JSON file or the authenticated management API. A relative
+// proxyfile is resolved against the directory of path.
 func Normalize(path string, cfg Config) (Config, error) {
 	cfg.Rotation.Defaults()
 	if err := cfg.Rotation.Validate(nil); err != nil {
 		return Config{}, err
 	}
 	trimList(&cfg.ServerKeys)
+	remapServerKeyMetadata(&cfg)
+
 	trimList(&cfg.ZenKeys)
 	trimList(&cfg.GoKeys)
+	// A placeholder copied from the documentation is not a credential. Treating
+	// it as one routes every free-model failure into a 401 from the keyed tier.
+	cfg = DropPlaceholderKeys(cfg)
 	cfg.ProxyFile = strings.TrimSpace(cfg.ProxyFile)
 	if err := resolveProxyFiles(path, &cfg); err != nil {
 		return Config{}, err
@@ -198,7 +304,7 @@ func Normalize(path string, cfg Config) (Config, error) {
 		return Config{}, errors.New("server_keys must contain at least one local key")
 	}
 	if cfg.FirstEnabledServerKey() == "" {
-		return Config{}, errors.New("至少保留一个启用的 API Key")
+		return Config{}, errors.New("at least one server key must remain enabled")
 	}
 	if !cfg.Anonymous && len(cfg.ZenKeys) == 0 && len(cfg.GoKeys) == 0 {
 		return Config{}, errors.New("zen_keys or go_keys must contain at least one upstream key unless anonymous is enabled")
@@ -220,6 +326,12 @@ func Normalize(path string, cfg Config) (Config, error) {
 	}
 	if cfg.Performance.FirstEventTimeoutSeconds < 0 || cfg.Performance.FirstEventTimeoutSeconds > 86400 {
 		return Config{}, errors.New("performance.first_event_timeout_seconds must be between 0 and 86400 (0 disables the first-event timeout)")
+	}
+	if cfg.Performance.MaxAnonymousExits < 0 {
+		return Config{}, errors.New("performance.max_anonymous_exits must not be negative (0 uses the built-in cap)")
+	}
+	if cfg.Performance.FreeTierBlockSeconds < 0 {
+		return Config{}, errors.New("performance.free_tier_block_seconds must not be negative (0 uses the built-in cool-down)")
 	}
 	if cfg.Logging.Level != "debug" && cfg.Logging.Level != "info" && cfg.Logging.Level != "warn" && cfg.Logging.Level != "error" {
 		return Config{}, errors.New("logging.level must be debug, info, warn, or error")
@@ -250,7 +362,8 @@ func Normalize(path string, cfg Config) (Config, error) {
 		if raw == "direct" {
 			continue
 		}
-		u, err := url.Parse(raw)
+		clean, _ := ParseProxyEntry(raw)
+		u, err := url.Parse(clean)
 		if err != nil || u.Host == "" {
 			return Config{}, fmt.Errorf("invalid proxy URL %q", RedactURL(raw))
 		}
@@ -259,6 +372,9 @@ func Normalize(path string, cfg Config) (Config, error) {
 		default:
 			return Config{}, fmt.Errorf("unsupported proxy scheme %q", u.Scheme)
 		}
+	}
+	if err := cfg.Models.AnonymousBackoff.Normalize(); err != nil {
+		return Config{}, err
 	}
 	for model, protocol := range cfg.Models.Protocols {
 		if model == "" || !wire.Valid(wire.Protocol(protocol)) {
@@ -338,6 +454,26 @@ func (cfg Config) ResolveModel(model string) string {
 	return model
 }
 
+// remapServerKeyMetadata migrates entries in per-key metadata that were stored
+// under the truncated 10-character fingerprint to the full fingerprint key.
+func remapServerKeyMetadata(cfg *Config) {
+	if len(cfg.ServerKeyMetadata) == 0 {
+		return
+	}
+	for _, key := range cfg.ServerKeys {
+		oldID := Fingerprint(key)[:10]
+		metadata, exists := cfg.ServerKeyMetadata[oldID]
+		if !exists {
+			continue
+		}
+		newID := Fingerprint(key)
+		if _, alreadyPresent := cfg.ServerKeyMetadata[newID]; !alreadyPresent {
+			cfg.ServerKeyMetadata[newID] = metadata
+		}
+		delete(cfg.ServerKeyMetadata, oldID)
+	}
+}
+
 // normalizeReasoning validates and canonicalizes the forced thinking level.
 //
 // Levels are stored lowercased so the hot path can compare them without
@@ -374,7 +510,8 @@ func normalizeReasoning(cfg *Config) error {
 }
 
 // validateEffort accepts the levels the OpenAI and Anthropic surfaces define
-// plus an empty string, which means "not forced".
+// (minimal through max), the gateway controls "auto" and "none", and an empty
+// string, which means "not forced".
 func validateEffort(name, value string) error {
 	switch value {
 	case "", "auto", "minimal", "low", "medium", "high", "xhigh", "max", "none":
@@ -385,7 +522,8 @@ func validateEffort(name, value string) error {
 }
 
 // ForcedEffort returns the level the operator forced for a model, or an empty
-// string when none applies. A stored level is already lowercase.
+// string when none applies. A per-model entry, even an empty one, takes
+// precedence over the default. A stored level is already lowercase.
 func (cfg Config) ForcedEffort(model string) string {
 	if effort, ok := cfg.Reasoning.EffortByModel[model]; ok {
 		return effort
@@ -393,9 +531,10 @@ func (cfg Config) ForcedEffort(model string) string {
 	return cfg.Reasoning.Effort
 }
 
-// RuntimeProxies returns the resolved proxy list, including proxyfile entries.
-// Config.Proxies intentionally remains the list stored in config.json so a
-// save never duplicates values loaded from proxyfile.
+// RuntimeProxies returns the resolved proxy list, including proxyfile entries,
+// or ["direct"] when there are none. Config.Proxies intentionally remains the
+// list stored in config.json so a save never duplicates values loaded from
+// proxyfile.
 func (cfg Config) RuntimeProxies() []string {
 	if len(cfg.effectiveProxies) > 0 {
 		return cfg.effectiveProxies
@@ -406,12 +545,17 @@ func (cfg Config) RuntimeProxies() []string {
 	return []string{"direct"}
 }
 
-// PasswordForSave ensures resolved-only data is excluded. The method is kept
-// separate to make accidental persistence of effective proxy values obvious.
+// PasswordForSave clears the resolved proxy list (the proxies plus proxyfile
+// entries that RuntimeProxies returns), leaving only Config.Proxies; despite
+// its name it does not touch the WebUI password. SaveAtomic calls it on its
+// own copy before encoding. The field is unexported and so never encoded
+// anyway, which makes the call a guard rather than a requirement.
 func (cfg *Config) PasswordForSave() {
 	cfg.effectiveProxies = nil
 }
 
+// Clone returns a copy of cfg whose slices and maps, including the rotation
+// orders and the resolved proxy list, no longer share storage with cfg.
 func Clone(cfg Config) Config {
 	cfg.Rotation.SOTA.Order = append([]string(nil), cfg.Rotation.SOTA.Order...)
 	cfg.Rotation.Sweet.Order = append([]string(nil), cfg.Rotation.Sweet.Order...)

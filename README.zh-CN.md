@@ -1,6 +1,6 @@
 # opencode2api
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md) | [Tiếng Việt](README.vi.md)
 
 使用 Go 编写的 **OpenCode Zen / Zen Go API 网关**。对外提供 Chat Completions、Responses 和 Anthropic Messages 接口，按上游原生协议转换请求，并统一管理上游 Key 与代理。
 
@@ -36,7 +36,7 @@ go build -o opencode2api ./cmd/opencode2api
 启动前编辑 `config.json`：
 
 1. 将 `server_keys` 替换为自己的本地 API Key。
-2. 填入 Zen 或 Go Key；也可以设置 `anonymous: true`，并清空两个上游 Key 数组。
+2. 可选：填入 Zen 或 Go Key；示例已启用匿名通道，并清空两个上游 Key 数组。
 3. 替换 `webui.password`。示例配置启用了 WebUI，用户名为 `admin`。
 
 ```bash
@@ -284,11 +284,13 @@ O2A_MODEL_ALIASES={"muse-spark-1.3":"muse-spark-1.3-contributor-free"}
 
 路由顺序：
 
-1. 符合条件的模型先尝试匿名通道，每个可用代理最多一次。
+1. 符合条件的模型最多尝试 `performance.max_anonymous_exits` 个可用匿名代理，每个代理一次；每个代理先走 v2 `/inference`，再走 v1 `/zen`。
 2. 按 `prefer` 顺序尝试认证通道，仅包含已配置 Key 且可以提供该模型的 Tier。
 3. 每个认证 Tier 分别使用 `retry.max_attempts` 预算。
 
-匿名阶段不受 `retry.max_attempts` 截断，但所有阶段共享请求总超时。网络错误、认证失败、限流和服务端错误可以触发 Key 轮换；其他 4xx 会结束当前 Tier，仍可继续尝试另一个可用 Tier。
+匿名阶段不受 `retry.max_attempts` 截断，但所有阶段共享请求总超时。网络错误、认证失败、限流和服务端错误可以触发出口轮换。请求级 `400`/`413`/`422`（例如 `context_length_exceeded`）会立即结束请求：换出口或换 Tier 都无法改变请求本身。IP 级 abuse `403` 只淘汰当前出口；所有出口都被封时停止扫描，已配置的 Go Key 仍可继续服务。
+
+配置 `models.anonymous_backoff` 后，连续 `threshold` 次匿名失败或所有出口都被 IP 封禁会暂停整条匿名通道 `base_hours`，之后每次再触发翻倍，直到 `max_hours`。单个非滥用 `403` 或 `429` 不会立即熔断，只计入连续失败。暂停期间不取代理、不发任何上游请求（包括模型目录刷新和可用性探测），路由直接落到认证通道。窗口到期后只允许一个请求做半开探测：成功关闭熔断并恢复匿名通道，失败则开启下一个更长的窗口。省略该配置块时熔断关闭。
 
 每个 Tier 使用自己的原生协议编码请求。启用 `performance.first_event_timeout_seconds` 后，会先等待完整的 SSE data 事件再向客户端交付响应；注释心跳不算首事件。首事件前超时或断开会沿用现有 Key / 代理重试预算，交付后不再重放。默认 `0` 关闭，可对接受请求后无事件的上游尝试设置为 `15` 秒。它限制首事件而非首个文本 token，不适用于 System One；轮转别名使用独立的 `rotation.first_output_seconds`。识别到过期的 Responses reasoning 引用时，可执行一次修复重试；指定 Key 的诊断不会执行该重试。
 
@@ -314,9 +316,9 @@ System One 使用原生 `noul` 类型询问“1+1 是否等于 2”，不注入�
 
 Key 初始化时均衡分配到代理。真实流量可以触发代理检查、Key 重新绑定和失败冷却。已经标记异常的代理，每 15 分钟通过 Cloudflare trace 复查一次。
 
-服务使用稳定会话哈希选择首选 Key 或匿名代理。建议通过 `x-session-id` 区分独立会话，同时支持 `x-opencode-session`、`x-session-affinity`、`conversation-id`、`conversation_id` 与 `metadata.session_id`。
+服务使用稳定会话哈希选择首选 Key 或匿名代理。建议通过 `x-session-id` 区分独立会话，同时支持 `x-opencode-session`、`x-session-affinity`、`session_id`、`conversation-id`、`conversation_id` 请求头，请求体中的 `conversation_id`、`metadata.session_id`，以及 Claude Code `metadata.user_id` 中的会话 ID。
 
-没有显式会话 ID 时，使用第一条用户消息生成会话标识，因此开场内容相同的会话可能共享亲和性。调整 Key 或代理池成员后，原有会话选择的节点可能变化。
+网关自行生成的会话与项目标识按调用方的服务端 Key 隔离，不同 Key 不会共享上游会话、首选 Key 或匿名代理；客户端自带的官方 OpenCode 会话（`ses_…`）原样保留。没有显式会话 ID 时，使用系统提示词和第一条用户消息生成会话标识，因此同一 Key 下系统提示词和开场内容都相同的会话仍可能共享亲和性。需要互相隔离的用户应各自使用独立的服务端 Key。调整 Key 或代理池成员后，原有会话选择的节点可能变化。
 
 失败冷却按指数增长，最高为 `performance.failure_cooldown_seconds` 的八倍；如果上游的 `Retry-After` 更长，则使用更长时间。所有认证 Key 都处于冷却时，路由仍可能尝试最早结束冷却的 Key；仍在冷却的匿名节点会被跳过。
 
@@ -333,14 +335,16 @@ Key 初始化时均衡分配到代理。真实流量可以触发代理检查、K
 | `zen_keys`、`go_keys`       | 未启用匿名模式时，至少需要一个上游 Key。                                              |
 | `anonymous`                 | `false`。                                                                             |
 | `prefer`                    | `go`；可选 `go`、`zen`。                                                              |
-| `upstream.zen`              | `https://opencode.ai/inference/openai`。                                                           |
+| `upstream.zen`              | `https://opencode.ai/zen`。                                                           |
 | `upstream.go`               | `https://opencode.ai/zen/go`。                                                        |
+| `upstream.anonymous`        | `https://opencode.ai/inference`；匿名通道优先使用，失败后回退到 `/zen`。             |
 | `proxies`                   | 两个代理来源都为空时，使用 `["direct"]`。                                             |
 | `proxyfile`                 | 可选；相对路径基于配置文件所在目录解析。                                              |
 | `models.refresh_seconds`    | `300`；最小为 1。                                                                     |
 | `models.protocols`          | `{}`；按模型 ID 覆盖原生协议。                                                        |
 | `models.aliases`            | `{}`；客户端名称 → 真实模型 ID，响应返回客户端使用的名称。                            |
 | `models.free_only`          | `false`；即使配置了 Zen / Go Key，也只暴露和路由免费模型。                            |
+| `models.anonymous_backoff`  | 缺省关闭；`{threshold, base_hours, max_hours}`，默认 6、1、24。                       |
 | `reasoning.effort`          | 空（关闭）；可选 `auto`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`none`。 |
 | `reasoning.effort_by_model` | `{}`；按模型 ID 覆盖 `reasoning.effort`。                                             |
 
@@ -385,6 +389,27 @@ direct
 
 支持 `#`、`;`、`//` 注释标记，标记需要位于行首或空白字符之后。
 
+#### 轮换代理池
+
+在条目末尾追加 `#pool`（或在开头加 `pool+`）即可声明该地址是轮换代理池（例如 [Resin](https://github.com/Resinat/Resin)），每次新建 TCP 连接都会从不同出口 IP 发出：
+
+```text
+http://127.0.0.1:7890#pool
+socks5://127.0.0.1:1080#pool
+pool+http://127.0.0.1:7891
+```
+
+代理池条目的处理方式与静态代理完全不同：
+
+| 行为         | 静态代理                                    | `#pool` 条目                                              |
+| ------------ | ------------------------------------------- | --------------------------------------------------------- |
+| 连接复用     | Keep-alive + HTTP/2 多路复用（`performance.*` 连接池参数） | 每次请求新建 TCP + CONNECT 隧道（`DisableKeepAlives`，禁用 HTTP/2） |
+| 失败冷却     | 15s–120s 指数退避，并受 `Retry-After` 影响  | 无冷却：下一次请求直接换一个新出口 IP                     |
+| 可用性剔除   | 标记不可用、迁移 Key、每 15 分钟复检        | 永不剔除，完全跳过健康检查                                |
+| 匿名通道重试 | 每个出口最多访问一次，最多 `performance.max_anonymous_exits` 个出口 | 最多尝试 `retry.max_attempts` 次，循环该池条目            |
+
+当 URL 背后的服务本身就在做轮换、而池内出口 IP 会被单独限流或不稳定时使用它：网关会把每次尝试都当作新出口，而不是把整个会话固定在某个出口上。只要一条 `#pool` 条目即可，无需再罗列几十个出口。静态条目仍然保留下文的连接池行为。
+
 ### 超时与连接池
 
 | 字段                                    | 默认值 | 含义                                             |
@@ -392,6 +417,8 @@ direct
 | `retry.max_attempts`                    | `3`    | 每个认证 Tier 的尝试次数，包含首次请求。         |
 | `retry.timeout_seconds`                 | `300`  | 推理请求总超时，包含流式响应读取。               |
 | `performance.attempt_timeout_seconds`   | `0`    | 单次尝试的总超时；0 表示使用请求总超时。         |
+| `performance.max_anonymous_exits`       | `8`    | 每个匿名请求最多尝试的静态代理出口数。           |
+| `performance.free_tier_block_seconds`   | `900`  | 被免费层标记的出口冷却时长。                     |
 | `performance.connect_timeout_seconds`   | `5`    | 建立连接的超时。                                 |
 | `performance.failure_cooldown_seconds`  | `15`   | 失败冷却基数。                                   |
 | `performance.max_idle_conns`            | `2048` | 每个代理 Transport 的空闲连接上限。              |
@@ -455,6 +482,17 @@ Playground 需要已登录的 Session 和 `X-CSRF-Token`，每个客户端 IP �
 
 执行后，管理接口返回 HTTP 200，实际结果位于 `ok`、`http_status`、`request_id`、`route` 和 `response`。指定 Key 时还返回 `selected_key` 与 `key_test`，其值包括 `usable`、`rejected`、`rate_limited`、`transport_error`、`upstream_error`、`request_error`、`unavailable`。管理请求格式、认证、CSRF 和限速错误仍返回各自对应的 HTTP 状态。
 
+### 界面语言
+
+WebUI 从 `webui/js/i18n.js` 加载翻译，内置 **简体中文**（默认）、**English** 和 **Tiếng Việt**。原始简体中文文案保留在 `index.html` 和 `webui/js/` 中，并始终作为缺少翻译时的回退，因此新增语言不会覆盖原文。
+
+- 语言选择器位于顶部工具栏右侧，登录卡片上也有一个。
+- 选择结果保存在 `localStorage`，键名为 `opencode2api.ui.lang`。
+- 切换语言会同时重绘静态文案（`data-i18n`、`data-i18n-attr`）和 JavaScript 生成的文案，无需刷新页面。
+- 日期时间格式跟随所选语言。
+
+新增语言时，在 `webui/js/i18n.js` 的 `DICTIONARY` 中增加一个语言块，并在 `SUPPORTED`、`LABELS` 和 `DATE_LOCALES` 中登记其代码。
+
 ### 保存与重载
 
 服务先验证候选配置并创建新的 Gateway，然后保存配置并切换实例。验证或保存失败时，当前 Gateway 继续处理请求；已经开始的请求继续使用原有实例。
@@ -509,10 +547,10 @@ internal/
   protocol/              请求和响应转换、SSE 解析与输出
   telemetry/             请求跟踪、指标、日志与异常恢复
 webui/
-  embed.go               将三个静态资源内嵌到可执行文件
+  embed.go               将静态资源内嵌到可执行文件
   index.html             页面结构
-  app.js                 界面交互
-  styles.css             界面样式
+  css/                   设计 token、基础样式、组件与页面布局
+  js/                    ES 模块：外壳、i18n、共享辅助与每页一个模块
 ```
 
 建议阅读顺序：
@@ -520,7 +558,7 @@ webui/
 1. [程序入口](cmd/opencode2api/main.go) → [运行时管理](internal/gateway/runtime.go) → [HTTP 处理](internal/gateway/gateway.go)。
 2. [上游请求](internal/gateway/upstream.go)和[模型路由](internal/models/catalog.go)说明请求如何选择并到达上游。
 3. [请求转换](internal/protocol/request.go)、[响应转换](internal/protocol/response.go)和[流式传输](internal/protocol/stream.go)说明协议处理过程。
-4. [管理路由](internal/admin/server.go)和 [WebUI 交互](webui/app.js)说明配置编辑与诊断功能。
+4. [管理路由](internal/admin/server.go)和 [WebUI 交互](webui/js/main.js)说明配置编辑与诊断功能。
 
 执行 Go 格式化、静态分析和程序构建：
 
@@ -535,10 +573,10 @@ go build -o opencode2api ./cmd/opencode2api
 Node.js 仅用于 WebUI 的 JavaScript 语法检查：
 
 ```bash
-node --check webui/app.js
+for f in webui/js/*.js webui/js/pages/*.js; do node --input-type=module --check < "$f"; done
 ```
 
-项目通过 `.editorconfig`、`.gitattributes` 和 Go 格式化统一格式。CI 覆盖 Linux / Windows 上的 Go 1.24 与稳定版 Go 的 `go vet` 和构建，以及 Go 格式、WebUI 语法和容器入口脚本语法检查。发布压缩包包含中英文两份 README。
+项目通过 `.editorconfig`、`.gitattributes` 和 Go 格式化统一格式。CI 覆盖 Linux / Windows 上的 Go 1.24 与稳定版 Go 的 `go vet` 和构建，以及 Go 格式、WebUI 语法和容器入口脚本语法检查。发布压缩包包含中英越三份 README。
 
 ## 常见问题
 

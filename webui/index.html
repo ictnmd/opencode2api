@@ -784,6 +784,15 @@
                         <span data-i18n="config.server.enabled">启用 WebUI（修改需重启）</span>
                       </label>
                     </div>
+                    <div class="field full">
+                      <label class="check">
+                        <input id="c-simple-errors" type="checkbox" />
+                        <span data-i18n="config.server.simpleErrors">简化错误响应</span>
+                      </label>
+                      <p class="section-caption" data-i18n="config.server.simpleErrorsHint">
+                        开启后，推理 API 的错误统一返回 {"error":{"code":"...","message":"..."}}，不再区分 Anthropic / OpenAI 格式。
+                      </p>
+                    </div>
                   </div>
                 </section>
               </div>

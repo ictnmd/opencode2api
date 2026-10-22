@@ -42,6 +42,7 @@ type Config struct {
 	WebUI             WebUIConfig                  `json:"webui"`
 	Prefer            Tier                         `json:"prefer"`
 	Reasoning         ReasoningConfig              `json:"reasoning"`
+	Errors            ErrorsConfig                 `json:"errors"`
 
 	effectiveProxies []string
 }
@@ -61,6 +62,18 @@ type ReasoningConfig struct {
 	// never set, matching how the rest of the optional surface is persisted.
 	Effort        string            `json:"effort,omitempty"`
 	EffortByModel map[string]string `json:"effort_by_model,omitempty"`
+}
+
+// ErrorsConfig controls the shape of the error bodies the inference API
+// returns.
+type ErrorsConfig struct {
+	// SimpleBody answers every inference error with one shape for all
+	// protocols: {"error":{"code":...,"message":...}}, carrying the error
+	// code and the message and nothing else. Off, the error keeps the
+	// envelope its protocol expects: the Anthropic {"type":"error",...} one
+	// for /v1/messages and the OpenAI {"error":{message,type,param,code}}
+	// one everywhere else.
+	SimpleBody bool `json:"simple_body"`
 }
 
 // UpstreamConfig holds the base URLs of the OpenCode origins. The gateway

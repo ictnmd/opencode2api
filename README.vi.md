@@ -277,6 +277,30 @@ Xem [config.example.json](config.example.json) để có một cấu hình khở
 | `models.anonymous_backoff` | Tắt khi vắng mặt; `{threshold, base_hours, max_hours}`, mặc định 6, 1, 24. |
 | `reasoning.effort`         | Rỗng (tắt); `minimal`, `low`, `medium`, `high`, `xhigh`, `max` hoặc `none`. |
 | `reasoning.effort_by_model`| `{}`; ghi đè `reasoning.effort` theo từng mô hình.              |
+| `errors.simple_body`        | `false`; mọi lỗi của API suy luận dùng `{"error":{"code","message"}}` thay vì envelope riêng theo giao thức. |
+
+### Lỗi dạng rút gọn
+
+Mặc định, lỗi của API suy luận giữ envelope mà giao thức của nó cần:
+`/v1/messages` dùng dạng Anthropic
+`{"type":"error","error":{"type":...,"message":...}}`, các endpoint khác dùng dạng
+OpenAI `{"error":{"message":...,"type":...,"param":null,"code":null}}`. Khi bật
+`errors.simple_body`, mọi giao thức đều trả cùng một dạng rút gọn, chỉ mang mã
+lỗi và thông điệp lỗi:
+
+```json
+{
+  "error": {
+    "code": "invalid_request_error",
+    "message": "model is required"
+  }
+}
+```
+
+Mã lỗi là chính bộ phân loại mà envelope theo giao thức đặt trong `type`, nên client
+đọc nó ở `error.code` thay vì `error.type`. Cài đặt này có hiệu lực ngay khi cấu
+hình được áp dụng, không cần khởi động lại; trung tâm cấu hình WebUI có một ô
+đánh dấu ngay cạnh công tắc WebUI.
 
 ### Bậc suy luận bị ép
 

@@ -62,6 +62,7 @@ function fillConfig(value) {
   $("#c-protocols").value = JSON.stringify(value.models.protocols || {}, null, 2);
   $("#c-aliases").value = JSON.stringify(value.models.aliases || {}, null, 2);
   $("#c-free-only").checked = !!value.models.free_only;
+  $("#c-simple-errors").checked = !!value.errors?.simple_body;
   const reasoning = value.reasoning || {};
   $("#c-reasoning-effort").value = reasoning.effort || "";
   $("#c-reasoning-by-model").value = JSON.stringify(reasoning.effort_by_model || {}, null, 2);
@@ -96,6 +97,7 @@ async function save(event) {
       prefer: $("#c-prefer").value,
       upstream: { zen: $("#c-up-zen").value, go: $("#c-up-go").value },
       retry: { max_attempts: numberValue("#c-attempts"), timeout_seconds: numberValue("#c-timeout") },
+      errors: { simple_body: $("#c-simple-errors").checked },
       models: {
         refresh_seconds: numberValue("#c-refresh"),
         protocols: JSON.parse($("#c-protocols").value || "{}"),

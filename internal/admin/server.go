@@ -142,6 +142,7 @@ type ConfigView struct {
 	Logging     config.LoggingConfig     `json:"logging"`
 	Prefer      config.Tier              `json:"prefer"`
 	Reasoning   config.ReasoningConfig   `json:"reasoning"`
+	Errors      config.ErrorsConfig      `json:"errors"`
 	WebUI       WebUIView                `json:"webui"`
 	Effective   EffectiveView            `json:"effective"`
 	Restart     []string                 `json:"restart_required_fields,omitempty"`
@@ -191,7 +192,10 @@ type ConfigUpdate struct {
 	// A pointer distinguishes an omitted field (legacy clients should keep the
 	// current reasoning configuration) from an explicit empty object (clear it).
 	Reasoning *config.ReasoningConfig `json:"reasoning,omitempty"`
-	WebUI     WebUIView               `json:"webui"`
+	// Errors carries the error body shape. A pointer distinguishes an omitted
+	// field (legacy clients keep the current one) from an explicit value.
+	Errors *config.ErrorsConfig `json:"errors,omitempty"`
+	WebUI  WebUIView            `json:"webui"`
 }
 
 // handleGetConfig answers with the current configuration, secrets masked.
@@ -235,12 +239,17 @@ func (a *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	if update.Reasoning != nil {
 		reasoning = *update.Reasoning
 	}
+	errors := current.Errors
+	if update.Errors != nil {
+		errors = *update.Errors
+	}
 	candidate := config.Config{
 		ServerKeyMetadata: current.ServerKeyMetadata,
 		Rotation:          current.Rotation,
 		Listen:            update.Listen, ServerKeys: serverKeys, ZenKeys: zenKeys, GoKeys: goKeys, Anonymous: update.Anonymous, Proxies: proxies, ProxyFile: update.ProxyFile,
 		Upstream: update.Upstream, Retry: update.Retry, Models: update.Models, Performance: update.Performance, Logging: update.Logging, Prefer: update.Prefer,
 		Reasoning: reasoning,
+		Errors:    errors,
 		WebUI:     config.WebUIConfig{Enabled: update.WebUI.Enabled, Listen: update.WebUI.Listen, Username: current.WebUI.Username, PasswordHash: current.WebUI.PasswordHash, SessionTTLMinutes: update.WebUI.SessionTTLMinutes},
 	}
 	result, err := a.manager.Apply(candidate, true)
@@ -382,7 +391,7 @@ func (a *Server) configView() ConfigView {
 	return ConfigView{
 		Listen: cfg.Listen, ServerKeys: maskSecrets(cfg.ServerKeys, false), ZenKeys: maskSecrets(cfg.ZenKeys, false), GoKeys: maskSecrets(cfg.GoKeys, false), Anonymous: cfg.Anonymous,
 		Proxies: maskSecrets(cfg.Proxies, true), ProxyFile: cfg.ProxyFile, Upstream: cfg.Upstream, Retry: cfg.Retry, Models: cfg.Models,
-		Performance: cfg.Performance, Logging: cfg.Logging, Prefer: cfg.Prefer, Reasoning: cfg.Reasoning,
+		Performance: cfg.Performance, Logging: cfg.Logging, Prefer: cfg.Prefer, Reasoning: cfg.Reasoning, Errors: cfg.Errors,
 		WebUI:     WebUIView{Enabled: cfg.WebUI.Enabled, Listen: cfg.WebUI.Listen, Username: cfg.WebUI.Username, SessionTTLMinutes: cfg.WebUI.SessionTTLMinutes},
 		Effective: EffectiveView{Listen: effective.API, WebUIListen: effective.WebUI, WebUIEnabled: effective.WebUIEnabled},
 		Restart:   restart,

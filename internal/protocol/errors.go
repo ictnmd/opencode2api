@@ -22,3 +22,16 @@ func WriteError(w http.ResponseWriter, protocol Protocol, status int, message, k
 	}
 	httpx.WriteJSONStatus(w, status, map[string]any{"error": map[string]any{"message": message, "type": kind, "param": nil, "code": nil}})
 }
+
+// WriteSimpleError writes the compact error body the simple-body mode uses:
+// {"error":{"code":...,"message":...}} for every protocol, carrying the error
+// code and the message and nothing else. The code is the same discriminator
+// WriteError puts in the protocol's own envelope, so a client reads it from
+// error.code instead of error.type.
+func WriteSimpleError(w http.ResponseWriter, status int, code, message, requestID string) {
+	w.Header().Set("Content-Type", "application/json")
+	if requestID != "" {
+		w.Header().Set("x-request-id", requestID)
+	}
+	httpx.WriteJSONStatus(w, status, map[string]any{"error": map[string]any{"code": code, "message": message}})
+}

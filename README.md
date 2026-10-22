@@ -386,6 +386,31 @@ See [config.example.json](config.example.json) for a complete starting configura
 | `models.anonymous_backoff`  | Absent (off); `{threshold, base_hours, max_hours}`, defaulting to `6`, `1`, `24`. |
 | `reasoning.effort`          | Empty (off); `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `none`. |
 | `reasoning.effort_by_model` | `{}`; per-model overrides of `reasoning.effort`.                            |
+| `errors.simple_body`        | `false`; answer every inference error with `{"error":{"code","message"}}` instead of the per-protocol envelope. |
+
+### Simple error body
+
+By default an inference error keeps the envelope its protocol expects: the
+Anthropic `{"type":"error","error":{"type":...,"message":...}}` shape for
+`/v1/messages` and the OpenAI
+`{"error":{"message":...,"type":...,"param":null,"code":null}}` shape everywhere
+else. With `errors.simple_body` enabled every protocol answers the same
+compact shape instead, carrying the error code and the message and nothing
+else:
+
+```json
+{
+  "error": {
+    "code": "invalid_request_error",
+    "message": "model is required"
+  }
+}
+```
+
+The code is the same discriminator the per-protocol envelope puts in `type`, so
+a client reads it from `error.code` instead. The setting applies as soon as the
+configuration is applied and needs no restart; the WebUI Configuration Center
+exposes it as a toggle next to the WebUI switch.
 
 ### Forced thinking level
 

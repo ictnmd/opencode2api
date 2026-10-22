@@ -188,7 +188,7 @@ func (g *Gateway) handleRotation(w http.ResponseWriter, r *http.Request, externa
 		status = http.StatusGatewayTimeout
 		message = "分组请求整体超时"
 	}
-	wire.WriteError(w, external, status, message, "rotation_unavailable", ids.Request)
+	g.writeError(w, external, status, message, "rotation_unavailable", ids.Request)
 }
 
 // rotationAttempt makes one upstream call for a rotation group model with the

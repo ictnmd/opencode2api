@@ -155,6 +155,9 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/messages", g.authenticate(g.handleInference(wire.Anthropic)))
 	mux.HandleFunc("POST /v1/systemone", g.authenticate(g.handleSystemOne))
 	mux.HandleFunc("GET /healthz", g.handleHealth)
+	if g.cfg.Errors.SimpleBody {
+		return telemetry.RecoverSimple(g.logger, mux)
+	}
 	return telemetry.Recover(g.logger, mux)
 }
 
@@ -184,7 +187,7 @@ func (g *Gateway) authenticate(next http.HandlerFunc) http.HandlerFunc {
 			if r.URL.Path == "/v1/messages" {
 				protocol = wire.Anthropic
 			}
-			wire.WriteError(w, protocol, http.StatusUnauthorized, "invalid local API key", "authentication_error", "")
+			g.writeError(w, protocol, http.StatusUnauthorized, "invalid local API key", "authentication_error", "")
 			return
 		}
 		// The Playground borrows the first enabled key to pass this check, so
@@ -236,17 +239,28 @@ func requestShapeFrom(ctx context.Context) requestShape {
 	return requestShape{}
 }
 
+// writeError answers an inference error. With errors.simple_body enabled the
+// compact {"error":{"code","message"}} shape is used for every protocol;
+// otherwise the error keeps the envelope its protocol expects.
+func (g *Gateway) writeError(w http.ResponseWriter, protocol wire.Protocol, status int, message, kind, requestID string) {
+	if g.cfg.Errors.SimpleBody {
+		wire.WriteSimpleError(w, status, kind, message, requestID)
+		return
+	}
+	wire.WriteError(w, protocol, status, message, kind, requestID)
+}
+
 func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(context.WithValue(r.Context(), requestShapeContextKey{}, &requestShape{}))
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBody))
 		if err != nil {
-			wire.WriteError(w, external, http.StatusBadRequest, "request body is too large or unreadable", "invalid_request_error", "")
+			g.writeError(w, external, http.StatusBadRequest, "request body is too large or unreadable", "invalid_request_error", "")
 			return
 		}
 		var payload map[string]any
 		if err := json.Unmarshal(body, &payload); err != nil {
-			wire.WriteError(w, external, http.StatusBadRequest, "request body must be a JSON object", "invalid_request_error", "")
+			g.writeError(w, external, http.StatusBadRequest, "request body must be a JSON object", "invalid_request_error", "")
 			return
 		}
 		model := jsonutil.StringAt(payload, "model")
@@ -255,7 +269,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			meta.Model = model
 		}
 		if model == "" {
-			wire.WriteError(w, external, http.StatusBadRequest, "model is required", "invalid_request_error", "model")
+			g.writeError(w, external, http.StatusBadRequest, "model is required", "invalid_request_error", "model")
 			return
 		}
 		// An operator can publish a model under a different client-facing name.
@@ -281,7 +295,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			return
 		}
 		if !g.catalog.Supported(resolved) {
-			wire.WriteError(w, external, http.StatusBadRequest, "the model uses an upstream protocol that opencode2api does not expose", "invalid_request_error", "model")
+			g.writeError(w, external, http.StatusBadRequest, "the model uses an upstream protocol that opencode2api does not expose", "invalid_request_error", "model")
 			return
 		}
 		route, err := g.catalog.Route(resolved, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0, g.cfg.Anonymous)
@@ -294,7 +308,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			// A routing error names the model it rejected, and that name is the
 			// real ID. Report the name the client used instead, or an aliased
 			// request would learn the real upstream model from a 400.
-			wire.WriteError(w, external, http.StatusBadRequest, substituteModelName(err.Error(), model, resolved), "invalid_request_error", "model")
+			g.writeError(w, external, http.StatusBadRequest, substituteModelName(err.Error(), model, resolved), "invalid_request_error", "model")
 			return
 		}
 		if meta != nil {
@@ -308,7 +322,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 		// gateway whose OpenAI platform pins every request to Responses.
 		if route.Protocol == wire.SystemOne {
 			if len(jsonutil.MapAt(payload, "questions")) == 0 || payload["state"] == nil {
-				wire.WriteError(w, external, http.StatusBadRequest, "this model uses System One decisions, not chat; send state and typed questions to /v1/systemone", "invalid_request_error", "model")
+				g.writeError(w, external, http.StatusBadRequest, "this model uses System One decisions, not chat; send state and typed questions to /v1/systemone", "invalid_request_error", "model")
 				return
 			}
 			// System One payloads are relayed verbatim, so the real model ID has
@@ -317,7 +331,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 				payload["model"] = resolved
 				encoded, encodeErr := json.Marshal(payload)
 				if encodeErr != nil {
-					wire.WriteError(w, external, http.StatusBadRequest, "request contains unsupported JSON values", "invalid_request_error", "")
+					g.writeError(w, external, http.StatusBadRequest, "request contains unsupported JSON values", "invalid_request_error", "")
 					return
 				}
 				body = encoded
@@ -327,7 +341,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 		}
 		bodies, err := g.prepareRouteBodies(external, route, payload)
 		if err != nil {
-			wire.WriteError(w, external, http.StatusBadRequest, err.Error(), "invalid_request_error", "")
+			g.writeError(w, external, http.StatusBadRequest, err.Error(), "invalid_request_error", "")
 			return
 		}
 		ids := identity.DeriveRequestIDs(r, payload, callerScope(r.Context()))
@@ -358,7 +372,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 				if meta != nil {
 					meta.Outcome = "client_canceled"
 				}
-				wire.WriteError(w, external, statusClientClosedRequest, "client closed request", "client_canceled", ids.Request)
+				g.writeError(w, external, statusClientClosedRequest, "client closed request", "client_canceled", ids.Request)
 				return
 			}
 			g.logger.Warn("all upstream attempts failed", "component", "upstream", "event", "request_failed", "request_id", ids.Request, "tier", finalTier, "key_id", keyID, "channel", channel, "anonymous", anonymous, "error", err)
@@ -366,13 +380,13 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			// route failed; report that instead of blaming the upstream with
 			// a 502.
 			if errors.Is(err, errProxyUnavailable) {
-				wire.WriteError(w, external, http.StatusServiceUnavailable, proxyUnavailableMessage, "proxy_error", ids.Request)
+				g.writeError(w, external, http.StatusServiceUnavailable, proxyUnavailableMessage, "proxy_error", ids.Request)
 				return
 			}
 			// An exhausted request budget is a timeout, not a bad gateway: the
 			// distinction matters to clients that retry on 502.
 			if errors.Is(err, context.DeadlineExceeded) {
-				wire.WriteError(w, external, http.StatusGatewayTimeout, "upstream request timed out", "upstream_timeout", ids.Request)
+				g.writeError(w, external, http.StatusGatewayTimeout, "upstream request timed out", "upstream_timeout", ids.Request)
 				return
 			}
 			// Every exit this request could use is under the free tier's IP
@@ -380,17 +394,17 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			// the client to retry into the same penalty, so answer with the
 			// block itself.
 			if errors.Is(err, errFreeTierIPBlocked) {
-				wire.WriteError(w, external, http.StatusServiceUnavailable, freeTierBlockedMessage, "free_tier_ip_blocked", ids.Request)
+				g.writeError(w, external, http.StatusServiceUnavailable, freeTierBlockedMessage, "free_tier_ip_blocked", ids.Request)
 				return
 			}
 			// The anonymous lane's circuit breaker is open. Report the pause
 			// distinctly so the operator does not look for a credential or a
 			// model problem in the upstream error.
 			if errors.Is(err, errAnonymousLanePaused) {
-				wire.WriteError(w, external, http.StatusServiceUnavailable, anonymousLanePausedMessage, "free_tier_lane_paused", ids.Request)
+				g.writeError(w, external, http.StatusServiceUnavailable, anonymousLanePausedMessage, "free_tier_lane_paused", ids.Request)
 				return
 			}
-			wire.WriteError(w, external, http.StatusBadGateway, "all upstream attempts failed", "upstream_error", ids.Request)
+			g.writeError(w, external, http.StatusBadGateway, "all upstream attempts failed", "upstream_error", ids.Request)
 			return
 		}
 		defer resp.Body.Close()
@@ -400,7 +414,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 		}
 		w.Header().Set("x-request-id", ids.Request)
 		if resp.StatusCode/100 != 2 {
-			copyErrorResponse(w, external, resp, ids.Request, model, resolved)
+			g.copyErrorResponse(w, external, resp, ids.Request, model, resolved)
 			return
 		}
 		shape := requestShapeFrom(r.Context())
@@ -449,7 +463,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 		}
 		responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 		if err != nil {
-			wire.WriteError(w, external, http.StatusBadGateway, "failed to read upstream response", "upstream_error", ids.Request)
+			g.writeError(w, external, http.StatusBadGateway, "failed to read upstream response", "upstream_error", ids.Request)
 			return
 		}
 		if upstreamRoute.Anonymous || shape.shaped {
@@ -460,7 +474,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			collapsed, err := wire.CollapseStream(bytes.NewReader(responseBody), upstreamRoute.Protocol, model)
 			if err != nil && !plainJSONDocument(responseBody) {
 				g.logger.Warn("forced stream collapse failed", "component", "conversion", "event", "stream_collapse_failed", "request_id", ids.Request, "model", resolved, "anonymous", upstreamRoute.Anonymous, "source_protocol", upstreamRoute.Protocol, "error", err)
-				wire.WriteError(w, external, http.StatusBadGateway, "unsupported upstream response", "upstream_error", ids.Request)
+				g.writeError(w, external, http.StatusBadGateway, "unsupported upstream response", "upstream_error", ids.Request)
 				return
 			}
 			if err == nil {
@@ -475,7 +489,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			responseBody, err = wire.ConvertResponse(upstreamRoute.Protocol, external, responseBody)
 			if err != nil {
 				g.logger.Warn("response protocol conversion failed", "component", "conversion", "event", "response_conversion_failed", "request_id", ids.Request, "model", resolved, "source_protocol", upstreamRoute.Protocol, "target_protocol", external, "error", err)
-				wire.WriteError(w, external, http.StatusBadGateway, "unsupported upstream response", "upstream_error", ids.Request)
+				g.writeError(w, external, http.StatusBadGateway, "unsupported upstream response", "upstream_error", ids.Request)
 				return
 			}
 		}
@@ -498,12 +512,12 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 func (g *Gateway) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBody))
 	if err != nil {
-		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, "request body is too large or unreadable", "invalid_request_error", "")
+		g.writeError(w, wire.SystemOne, http.StatusBadRequest, "request body is too large or unreadable", "invalid_request_error", "")
 		return
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, "request body must be a JSON object", "invalid_request_error", "")
+		g.writeError(w, wire.SystemOne, http.StatusBadRequest, "request body must be a JSON object", "invalid_request_error", "")
 		return
 	}
 	model := jsonutil.StringAt(payload, "model")
@@ -511,7 +525,7 @@ func (g *Gateway) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 		meta.Model = model
 	}
 	if model == "" {
-		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, "model is required", "invalid_request_error", "model")
+		g.writeError(w, wire.SystemOne, http.StatusBadRequest, "model is required", "invalid_request_error", "model")
 		return
 	}
 	// Aliases apply here too, so an operator's client-facing name works on
@@ -524,18 +538,18 @@ func (g *Gateway) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !g.catalog.Supported(resolved) {
-		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, "the model uses an upstream protocol that opencode2api does not expose", "invalid_request_error", "model")
+		g.writeError(w, wire.SystemOne, http.StatusBadRequest, "the model uses an upstream protocol that opencode2api does not expose", "invalid_request_error", "model")
 		return
 	}
 	route, err := g.catalog.Route(resolved, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0, g.cfg.Anonymous)
 	if err != nil {
 		// Same rule as the message endpoints: a rejected alias reports the name
 		// the client used, never the real upstream ID embedded in the error.
-		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, substituteModelName(err.Error(), model, resolved), "invalid_request_error", "model")
+		g.writeError(w, wire.SystemOne, http.StatusBadRequest, substituteModelName(err.Error(), model, resolved), "invalid_request_error", "model")
 		return
 	}
 	if route.Protocol != wire.SystemOne {
-		wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, fmt.Sprintf("the model does not use the %s protocol", wire.SystemOne), "invalid_request_error", "model")
+		g.writeError(w, wire.SystemOne, http.StatusBadRequest, fmt.Sprintf("the model does not use the %s protocol", wire.SystemOne), "invalid_request_error", "model")
 		return
 	}
 	if aliased {
@@ -543,7 +557,7 @@ func (g *Gateway) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 		payload["model"] = resolved
 		encoded, encodeErr := json.Marshal(payload)
 		if encodeErr != nil {
-			wire.WriteError(w, wire.SystemOne, http.StatusBadRequest, "request contains unsupported JSON values", "invalid_request_error", "")
+			g.writeError(w, wire.SystemOne, http.StatusBadRequest, "request contains unsupported JSON values", "invalid_request_error", "")
 			return
 		}
 		body = encoded
@@ -599,19 +613,19 @@ func (g *Gateway) forwardSystemOne(w http.ResponseWriter, r *http.Request, body 
 			if meta != nil {
 				meta.Outcome = "client_canceled"
 			}
-			wire.WriteError(w, wire.SystemOne, statusClientClosedRequest, "client closed request", "client_canceled", ids.Request)
+			g.writeError(w, wire.SystemOne, statusClientClosedRequest, "client closed request", "client_canceled", ids.Request)
 			return
 		}
 		g.logger.Warn("all upstream attempts failed", "component", "upstream", "event", "request_failed", "request_id", ids.Request, "tier", finalTier, "key_id", keyID, "channel", channel, "anonymous", anonymous, "error", err)
 		if errors.Is(err, errProxyUnavailable) {
-			wire.WriteError(w, wire.SystemOne, http.StatusServiceUnavailable, proxyUnavailableMessage, "proxy_error", ids.Request)
+			g.writeError(w, wire.SystemOne, http.StatusServiceUnavailable, proxyUnavailableMessage, "proxy_error", ids.Request)
 			return
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			wire.WriteError(w, wire.SystemOne, http.StatusGatewayTimeout, "upstream request timed out", "upstream_timeout", ids.Request)
+			g.writeError(w, wire.SystemOne, http.StatusGatewayTimeout, "upstream request timed out", "upstream_timeout", ids.Request)
 			return
 		}
-		wire.WriteError(w, wire.SystemOne, http.StatusBadGateway, "all upstream attempts failed", "upstream_error", ids.Request)
+		g.writeError(w, wire.SystemOne, http.StatusBadGateway, "all upstream attempts failed", "upstream_error", ids.Request)
 		return
 	}
 	defer resp.Body.Close()
@@ -623,7 +637,7 @@ func (g *Gateway) forwardSystemOne(w http.ResponseWriter, r *http.Request, body 
 	if resp.StatusCode/100 != 2 {
 		// route.ID is the real upstream model ID; model is the name the client
 		// used, which differs only for a configured alias.
-		copyErrorResponse(w, wire.SystemOne, resp, ids.Request, model, route.ID)
+		g.copyErrorResponse(w, wire.SystemOne, resp, ids.Request, model, route.ID)
 		return
 	}
 	if contentType := resp.Header.Get("Content-Type"); strings.HasPrefix(contentType, "text/event-stream") {
@@ -642,7 +656,7 @@ func (g *Gateway) forwardSystemOne(w http.ResponseWriter, r *http.Request, body 
 	}
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
-		wire.WriteError(w, wire.SystemOne, http.StatusBadGateway, "failed to read upstream response", "upstream_error", ids.Request)
+		g.writeError(w, wire.SystemOne, http.StatusBadGateway, "failed to read upstream response", "upstream_error", ids.Request)
 		return
 	}
 	if usage, reported := wire.ResponseUsage(upstreamRoute.Protocol, responseBody); meta != nil {
@@ -719,7 +733,7 @@ func (g *Gateway) prepareRouteBodies(from wire.Protocol, route models.Route, inp
 // for, and that text is forwarded as the client-visible message. The name the
 // client used is therefore substituted for the real ID, exactly as it is in a
 // successful reply. A request that named the real ID directly is unaffected.
-func copyErrorResponse(w http.ResponseWriter, protocol wire.Protocol, resp *http.Response, requestID, clientModel, realModel string) {
+func (g *Gateway) copyErrorResponse(w http.ResponseWriter, protocol wire.Protocol, resp *http.Response, requestID, clientModel, realModel string) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
 		w.Header().Set("Retry-After", retryAfter)
@@ -730,7 +744,7 @@ func copyErrorResponse(w http.ResponseWriter, protocol wire.Protocol, resp *http
 		message = jsonutil.FirstString(jsonutil.StringAt(value, "error", "message"), jsonutil.StringAt(value, "message"), message)
 	}
 	message = substituteModelName(message, clientModel, realModel)
-	wire.WriteError(w, protocol, resp.StatusCode, message, "upstream_error", requestID)
+	g.writeError(w, protocol, resp.StatusCode, message, "upstream_error", requestID)
 }
 
 // plainJSONDocument reports whether body is one complete JSON object, i.e. the

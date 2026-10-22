@@ -347,6 +347,26 @@ Key 初始化时均衡分配到代理。真实流量可以触发代理检查、K
 | `models.anonymous_backoff`  | 缺省关闭；`{threshold, base_hours, max_hours}`，默认 6、1、24。                       |
 | `reasoning.effort`          | 空（关闭）；可选 `auto`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`none`。 |
 | `reasoning.effort_by_model` | `{}`；按模型 ID 覆盖 `reasoning.effort`。                                             |
+| `errors.simple_body`        | `false`；推理 API 的错误统一返回 `{"error":{"code","message"}}`，不再区分 Anthropic / OpenAI 格式。 |
+
+### 简化错误响应
+
+默认情况下，推理错误沿用其协议本应的 envelope：`/v1/messages` 使用 Anthropic 的
+`{"type":"error","error":{"type":...,"message":...}}`，其余端点使用 OpenAI 的
+`{"error":{"message":...,"type":...,"param":null,"code":null}}`。开启
+`errors.simple_body` 后，所有协议统一返回只含错误码与错误信息的紧凑格式：
+
+```json
+{
+  "error": {
+    "code": "invalid_request_error",
+    "message": "model is required"
+  }
+}
+```
+
+错误码与原 envelope 中的 `type` 是同一个判别值，客户端改从 `error.code` 读取即可。
+该开关在配置应用后立即生效，无需重启；WebUI 配置中心在 WebUI 开关旁提供同名复选框。
 
 ### 强制思考强度
 

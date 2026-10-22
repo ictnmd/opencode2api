@@ -249,6 +249,9 @@ const DICTIONARY = {
       "config.server.prefer.zen": "Zen (fall back to Go on error)",
       "config.server.session": "Session TTL (minutes)",
       "config.server.enabled": "Enable WebUI (restart required after change)",
+      "config.server.simpleErrors": "Simple error body",
+      "config.server.simpleErrorsHint":
+        "When enabled, inference errors always use {\"error\":{\"code\":\"...\",\"message\":\"...\"}} instead of the per-protocol envelopes.",
       "config.secrets.title": "Secrets and anonymous channel",
       "config.secrets.caption":
         "Sensitive values are masked by default; a cleared value only takes effect after saving.",
@@ -798,6 +801,9 @@ const DICTIONARY = {
       "config.server.prefer.zen": "Zen (lỗi thì dự phòng Go)",
       "config.server.session": "Session TTL (phút)",
       "config.server.enabled": "Bật WebUI (cần khởi động lại khi thay đổi)",
+      "config.server.simpleErrors": "Lỗi dạng rút gọn",
+      "config.server.simpleErrorsHint":
+        "Khi bật, lỗi của API suy luận luôn dùng {\"error\":{\"code\":\"...\",\"message\":\"...\"}} thay vì các envelope riêng theo giao thức.",
       "config.secrets.title": "Khóa và kênh ẩn danh",
       "config.secrets.caption":
         "Giá trị nhạy cảm mặc định chỉ hiện dạng che; chỉ lưu sau khi gỡ bỏ mới có hiệu lực.",

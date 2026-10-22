@@ -246,6 +246,7 @@ overlay_config() {
     apply_str O2A_PREFER '.prefer' 'prefer'
     apply_str O2A_REASONING_EFFORT '.reasoning.effort' 'reasoning.effort'
     apply_json_object O2A_REASONING_EFFORT_BY_MODEL '.reasoning.effort_by_model' 'reasoning.effort_by_model'
+    apply_bool O2A_ERRORS_SIMPLE_BODY '.errors.simple_body' 'errors.simple_body'
 
     # HTTP connection pool and timeouts. The two attempt/first-event timeouts
     # accept 0, which means "no timeout" and must stay a valid override.

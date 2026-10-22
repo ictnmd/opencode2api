@@ -49,7 +49,11 @@ func applyTokenLimitAlias(protocol Protocol, body map[string]any) {
 	}
 	switch protocol {
 	case Chat:
-		// max_completion_tokens is a Chat field of its own and stays.
+		// Chat providers disagree on whether they accept max_tokens or
+		// max_completion_tokens. Normalize both aliases to max_tokens so the
+		// upstream never receives competing output limits. The target's
+		// max_tokens value wins when supplied.
+		moveTokenLimit(body, "max_completion_tokens", "max_tokens")
 		moveTokenLimit(body, "max_output_tokens", "max_tokens")
 	case Responses:
 		moveTokenLimit(body, "max_tokens", "max_output_tokens")

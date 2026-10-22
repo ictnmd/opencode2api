@@ -15,11 +15,16 @@ import (
 // the bridge. Target-protocol normalization then repairs reasoning history in
 // either case, using the model and upstreamURL to recognize reasoning
 // vendors, and a Responses body has its max_output_tokens floored.
+//
+// An output-token limit stated under another protocol's field name is moved
+// onto the name the target protocol uses, so a cloned body keeps the limit
+// without the foreign field an upstream schema rejects.
 func PrepareRequest(from, to Protocol, input map[string]any, upstreamURL string) (map[string]any, error) {
 	output, err := ConvertRequest(from, to, input)
 	if err != nil {
 		return nil, err
 	}
+	applyTokenLimitAlias(to, output)
 	if to == Responses {
 		// The bridge already floors converted bodies; a same-protocol body is
 		// a clone of the client's and needs the same guard.
@@ -27,6 +32,47 @@ func PrepareRequest(from, to Protocol, input map[string]any, upstreamURL string)
 	}
 	normalizeToolReasoningHistory(to, jsonutil.StringAt(output, "model"), upstreamURL, output)
 	return output, nil
+}
+
+// applyTokenLimitAlias maps the output-token limit onto the field the target
+// protocol names. The three protocols agree on what the limit means and
+// disagree on what it is called: Chat and Anthropic Messages name it
+// max_tokens, Responses names it max_output_tokens. A client that states the
+// limit under the other protocol's name keeps the limit, and the upstream no
+// longer sees a field its schema rejects.
+//
+// A limit the target protocol already names is left alone: the target's own
+// spelling wins, and the foreign one is dropped either way.
+func applyTokenLimitAlias(protocol Protocol, body map[string]any) {
+	if body == nil {
+		return
+	}
+	switch protocol {
+	case Chat:
+		// max_completion_tokens is a Chat field of its own and stays.
+		moveTokenLimit(body, "max_output_tokens", "max_tokens")
+	case Responses:
+		moveTokenLimit(body, "max_tokens", "max_output_tokens")
+		moveTokenLimit(body, "max_completion_tokens", "max_output_tokens")
+	case Anthropic:
+		moveTokenLimit(body, "max_output_tokens", "max_tokens")
+		moveTokenLimit(body, "max_completion_tokens", "max_tokens")
+	}
+}
+
+// moveTokenLimit moves a token limit from one field name to another and drops
+// the source name, so the field the source protocol uses never reaches an
+// upstream that does not accept it.
+func moveTokenLimit(body map[string]any, from, to string) {
+	value, ok := body[from]
+	if !ok {
+		return
+	}
+	delete(body, from)
+	if _, exists := body[to]; exists {
+		return
+	}
+	body[to] = value
 }
 
 // ForcedEffort applies an operator-configured thinking level to a prepared

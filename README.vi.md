@@ -177,6 +177,11 @@ System One ghép một state tự do với các câu hỏi có kiểu và trả 
 
 Request dùng giao thức gốc của upstream sẽ giữ nguyên các trường riêng của nhà cung cấp. Request đi qua nhiều giao thức sẽ đi qua một biểu diễn chung; không phải tuỳ chọn nào cũng có phần tương đương. Ví dụ, ràng buộc output JSON của Chat và `seed` không được chuyển tiếp sang Anthropic Messages. Nội dung hoặc loại tool không được hỗ trợ có thể bị từ chối.
 
+Ba giao thức đặt tên khác nhau cho giới hạn output token: Chat và Anthropic Messages
+dùng `max_tokens`, Responses dùng `max_output_tokens`. Một request nêu giới hạn theo tên
+của giao thức khác vẫn được hiểu — giới hạn được chuyển sang tên mà giao thức upstream dùng,
+nên body pass-through không mang field mà schema của upstream từ chối.
+
 Gateway cung cấp đúng các route nêu trên. Nó không triển khai embeddings, tải tệp lên, sinh ảnh, hay truy xuất và huỷ của Responses. Nó không lưu lịch sử hội thoại; client phải tự cung cấp lịch sử hoặc dùng các tính năng được upstream thật hỗ trợ.
 
 ## Định tuyến và mô hình

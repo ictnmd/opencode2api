@@ -251,6 +251,12 @@ System One pairs a free-form state with typed questions and returns typed answer
 
 Requests using the upstream's native protocol retain provider-specific fields. Requests crossing protocols pass through a common representation; not every option has an equivalent. For example, Chat JSON output constraints and `seed` are not forwarded to Anthropic Messages. Unsupported content or tool types may be rejected.
 
+Output-token limits are named differently by the three protocols: Chat and Anthropic
+Messages call it `max_tokens`, Responses calls it `max_output_tokens`. A request that
+states the limit under the other protocol's name is understood — the limit is moved
+onto the name the upstream protocol uses, so a passthrough body never carries a field
+the upstream schema rejects.
+
 The gateway exposes the routes listed above. It does not implement embeddings, file uploads, image generation, or Responses retrieval and cancellation. It does not store conversation history; clients must supply the history or use features supported by the actual upstream.
 
 ## Routing and models

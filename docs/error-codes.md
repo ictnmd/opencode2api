@@ -40,13 +40,31 @@ mọi giao thức — kể cả `/v1/messages` — trả cùng một dạng rút
 
 `code` là cùng bộ phân loại mà envelope gốc đặt trong `type` (`invalid_request_error`,
 `authentication_error`, `upstream_error`, …). HTTP status, header `x-request-id` và
-mọi message trong bảng dưới đây không đổi.
+mọi message trong bảng dưới đây không đổi. Khi upstream báo mã lỗi riêng của nó,
+mã đó được dùng làm `code` (xem §0.2).
 
 Phạm vi: chỉ áp dụng cho **body lỗi** của API inference. Frame lỗi giữa luồng SSE
 (§3) vẫn theo shape riêng của từng giao thức, vì chúng nằm trong stream đã commit
 HTTP 200. Admin API (`/api/*`) luôn dùng envelope `{"error":{"code","message"}}` của riêng nó.
 Lỗi do panic (500) cũng theo chế độ đang bật.
 
+## 0.2 Mã lỗi do upstream báo (`code`)
+
+Khi upstream trả lỗi non-2xx, mã lỗi của chính nó được giữ lại thay vì bị bỏ qua:
+
+- Lấy từ `error.code`, rồi `error.type` của body upstream. Chỉ nhận giá trị là mã
+  thật: chữ, số, `.`, `-`, `_`, bắt đầu bằng chữ, tối đa 64 ký tự. Free text không
+  phải mã thì bị bỏ qua (`upstreamErrorCode`, `isErrorCode`, gateway.go).
+- **Envelope OpenAI** (`{"error":{message,type,param,code}}`): `error.code` = mã
+  upstream (trước đây luôn là `null`), `error.type` vẫn là `upstream_error` như cũ.
+- **Chế độ đơn giản** (`errors.simple_body`): `error.code` = mã upstream nếu có,
+  không thì là `kind` của gateway (`upstream_error`).
+- **Envelope Anthropic**: không có slot `code`, nên mã upstream không xuất hiện riêng —
+  nó vẫn nằm trong `message` mà upstream trả về.
+
+Ví dụ upstream trả
+`{"error":{"message":"invalid request body: json: unknown field \"max_output_tokens\"","type":"unknown_parameter"}}`
+thì client nhận `error.code = "unknown_parameter"` thay vì `null`.
 
 ---
 
@@ -54,14 +72,14 @@ Lỗi do panic (500) cũng theo chế độ đang bật.
 
 | `kind` | HTTP | Nguồn |
 |---|---|---|
-| `authentication_error` | 401 | `internal/gateway/gateway.go:187` |
-| `invalid_request_error` | 400 | `internal/gateway/gateway.go:244,249,258,284,297,311,320,330,501,506,514,527,534,538,546` |
-| `client_canceled` | 499 | `internal/gateway/gateway.go:361,602` |
-| `proxy_error` | 503 | `internal/gateway/gateway.go:369,607` |
-| `upstream_timeout` | 504 | `internal/gateway/gateway.go:375,611` |
-| `free_tier_ip_blocked` | 503 | `internal/gateway/gateway.go:383` |
-| `free_tier_lane_paused` | 503 | `internal/gateway/gateway.go:390` |
-| `upstream_error` | 502 / status của upstream | `internal/gateway/gateway.go:393,452,463,478,614,645,733` |
+| `authentication_error` | 401 | `internal/gateway/gateway.go:190` |
+| `invalid_request_error` | 400 | `internal/gateway/gateway.go:276,281,290,316,329,343,352,362,533,538,546,559,566,570,578` |
+| `client_canceled` | 499 | `internal/gateway/gateway.go:393,634` |
+| `proxy_error` | 503 | `internal/gateway/gateway.go:401,639` |
+| `upstream_timeout` | 504 | `internal/gateway/gateway.go:407,643` |
+| `free_tier_ip_blocked` | 503 | `internal/gateway/gateway.go:415` |
+| `free_tier_lane_paused` | 503 | `internal/gateway/gateway.go:422` |
+| `upstream_error` | 502 / status của upstream | `internal/gateway/gateway.go:425,484,495,510,646,677,768` |
 | `rotation_unavailable` | 503 / 504 | `internal/gateway/rotation.go:191` |
 | `server_error` | 500 | `internal/telemetry/recovery.go:17` |
 
@@ -69,27 +87,27 @@ Lỗi do panic (500) cũng theo chế độ đang bật.
 
 | `kind` | Message (verbatim) | HTTP | Vị trí | Điều kiện |
 |---|---|---|---|---|
-| `authentication_error` | `invalid local API key` | 401 | gateway.go:187 | `x-api-key` / `Bearer` không khớp server key nào đang bật |
-| `invalid_request_error` | `request body is too large or unreadable` | 400 | gateway.go:244 / :501 | body > 32 MiB (`maxRequestBody`, gateway.go:38) hoặc đọc lỗi |
-| `invalid_request_error` | `request body must be a JSON object` | 400 | gateway.go:249 / :506 | body không phải JSON object |
-| `invalid_request_error` | `model is required` | 400 | gateway.go:258 / :514 | thiếu `model`; `param:"model"` |
-| `invalid_request_error` | `the model uses an upstream protocol that opencode2api does not expose` | 400 | gateway.go:284 / :527 | model không có trong catalog; `param:"model"` |
-| `invalid_request_error` | *text lỗi routing của catalog* (xem §1.2) | 400 | gateway.go:297 / :534 | `catalog.Route` thất bại; `param:"model"` |
-| `invalid_request_error` | `this model uses System One decisions, not chat; send state and typed questions to /v1/systemone` | 400 | gateway.go:311 | model là SystemOne nhưng gọi endpoint chat |
-| `invalid_request_error` | `the model does not use the systemone protocol` | 400 | gateway.go:538 | model không phải SystemOne nhưng gọi `/v1/systemone` |
-| `invalid_request_error` | `request contains unsupported JSON values` | 400 | gateway.go:320 / :546 | re-marshal alias payload lỗi |
-| `invalid_request_error` | `no usable upstream tier` | 400 | gateway.go:330 (nguồn :679) | route không cho tier zen/go |
-| `invalid_request_error` | `prepare zen upstream request: <cause>` / `prepare go upstream request: <cause>` | 400 | gateway.go:330 (nguồn :698) | bridge không encode được body (chỉ khi **cross-protocol**) |
-| `invalid_request_error` | `request contains unsupported JSON values` | 400 | gateway.go:330 (nguồn :705) | prepared body không marshal được |
-| `client_canceled` | `client closed request` | 499 | gateway.go:361 / :602 | client ngắt kết nối trước khi upstream trả lời |
-| `proxy_error` | `all proxies are unavailable; the upstream could not be reached` | 503 | gateway.go:369 / :607 | lỗi cuối là `errProxyUnavailable` |
-| `upstream_timeout` | `upstream request timed out` | 504 | gateway.go:375 / :611 | hết request budget (`context.DeadlineExceeded`) |
-| `free_tier_ip_blocked` | `OpenCode is blocking free-model traffic from the IP this gateway leaves from, so retrying now cannot succeed. Route the request through another exit or wait for the block to expire.` | 503 | gateway.go:383 (const abuse.go:24) | mọi exit bị OpenCode chặn IP free-tier |
-| `free_tier_lane_paused` | `The anonymous free tier is paused after repeated upstream failures. Configure an authenticated key, wait for the pause to expire, or restart the gateway after confirming the upstream block has lifted.` | 503 | gateway.go:390 (const abuse.go:35) | circuit breaker của anonymous lane mở |
-| `upstream_error` | `all upstream attempts failed` | 502 | gateway.go:393 / :614 | mọi attempt thất bại |
-| `upstream_error` | `failed to read upstream response` | 502 | gateway.go:452 / :645 | đọc body upstream lỗi |
-| `upstream_error` | `unsupported upstream response` | 502 | gateway.go:463 / :478 | collapse SSE thất bại, hoặc convert response thất bại |
-| `upstream_error` | *message của chính upstream* | status upstream | gateway.go:733 (`copyErrorResponse`) | upstream trả non-2xx |
+| `authentication_error` | `invalid local API key` | 401 | gateway.go:190 | `x-api-key` / `Bearer` không khớp server key nào đang bật |
+| `invalid_request_error` | `request body is too large or unreadable` | 400 | gateway.go:276 / :533 | body > 32 MiB (`maxRequestBody`, gateway.go:38) hoặc đọc lỗi |
+| `invalid_request_error` | `request body must be a JSON object` | 400 | gateway.go:281 / :538 | body không phải JSON object |
+| `invalid_request_error` | `model is required` | 400 | gateway.go:290 / :546 | thiếu `model`; `param:"model"` |
+| `invalid_request_error` | `the model uses an upstream protocol that opencode2api does not expose` | 400 | gateway.go:316 / :559 | model không có trong catalog; `param:"model"` |
+| `invalid_request_error` | *text lỗi routing của catalog* (xem §1.2) | 400 | gateway.go:329 / :566 | `catalog.Route` thất bại; `param:"model"` |
+| `invalid_request_error` | `this model uses System One decisions, not chat; send state and typed questions to /v1/systemone` | 400 | gateway.go:343 | model là SystemOne nhưng gọi endpoint chat |
+| `invalid_request_error` | `the model does not use the systemone protocol` | 400 | gateway.go:570 | model không phải SystemOne nhưng gọi `/v1/systemone` |
+| `invalid_request_error` | `request contains unsupported JSON values` | 400 | gateway.go:352 / :578 | re-marshal alias payload lỗi |
+| `invalid_request_error` | `no usable upstream tier` | 400 | gateway.go:362 (nguồn :711) | route không cho tier zen/go |
+| `invalid_request_error` | `prepare zen upstream request: <cause>` / `prepare go upstream request: <cause>` | 400 | gateway.go:362 (nguồn :730) | bridge không encode được body (chỉ khi **cross-protocol**) |
+| `invalid_request_error` | `request contains unsupported JSON values` | 400 | gateway.go:362 (nguồn :737) | prepared body không marshal được |
+| `client_canceled` | `client closed request` | 499 | gateway.go:393 / :634 | client ngắt kết nối trước khi upstream trả lời |
+| `proxy_error` | `all proxies are unavailable; the upstream could not be reached` | 503 | gateway.go:401 / :639 | lỗi cuối là `errProxyUnavailable` |
+| `upstream_timeout` | `upstream request timed out` | 504 | gateway.go:407 / :643 | hết request budget (`context.DeadlineExceeded`) |
+| `free_tier_ip_blocked` | `OpenCode is blocking free-model traffic from the IP this gateway leaves from, so retrying now cannot succeed. Route the request through another exit or wait for the block to expire.` | 503 | gateway.go:415 (const abuse.go:24) | mọi exit bị OpenCode chặn IP free-tier |
+| `free_tier_lane_paused` | `The anonymous free tier is paused after repeated upstream failures. Configure an authenticated key, wait for the pause to expire, or restart the gateway after confirming the upstream block has lifted.` | 503 | gateway.go:422 (const abuse.go:35) | circuit breaker của anonymous lane mở |
+| `upstream_error` | `all upstream attempts failed` | 502 | gateway.go:425 / :646 | mọi attempt thất bại |
+| `upstream_error` | `failed to read upstream response` | 502 | gateway.go:484 / :677 | đọc body upstream lỗi |
+| `upstream_error` | `unsupported upstream response` | 502 | gateway.go:495 / :510 | collapse SSE thất bại, hoặc convert response thất bại |
+| `upstream_error` | *message của chính upstream* | status upstream | gateway.go:768 (`copyErrorResponse`) | upstream trả non-2xx |
 | `rotation_unavailable` | `该分组暂无可用模型（已暂停、下架、额度不足或重试次数已用尽），请稍后重试` | 503 | gateway/rotation.go:186 | nhóm rotation hết model dùng được |
 | `rotation_unavailable` | `分组请求整体超时` | 504 | gateway/rotation.go:188 | hết budget trong lúc duyệt nhóm |
 | `server_error` | `internal server error` | 500 | telemetry/recovery.go:17 | panic trong handler |
@@ -98,7 +116,7 @@ Lỗi do panic (500) cũng theo chế độ đang bật.
 
 ### 1.2 Message lỗi routing của catalog (`internal/models/catalog.go`)
 
-Được ghi nguyên văn vào 400 `invalid_request_error`, với tên model thay bằng **alias của client** (`substituteModelName`, gateway.go:776):
+Được ghi nguyên văn vào 400 `invalid_request_error`, với tên model thay bằng **alias của client** (`substituteModelName`, gateway.go:846):
 
 - `model %q is not free and models.free_only is enabled` — catalog.go:174
 - `model %q is disabled after a failed availability check; restore it in the WebUI or wait for the next probe` — catalog.go:272
@@ -111,12 +129,12 @@ Lỗi do panic (500) cũng theo chế độ đang bật.
 
 `%s` = `zen` hoặc `go`.
 
-### 1.3 Cách lỗi upstream được parse (`copyErrorResponse`, gateway.go:722–734)
+### 1.3 Cách lỗi upstream được parse (`copyErrorResponse`, gateway.go:755–769)
 
 1. Đọc tối đa 4 MiB body upstream.
 2. Giữ nguyên status upstream **và** header `Retry-After`.
 3. Message = first non-empty của: `error.message` → `message` (top-level) → **`http.StatusText(status)`**.
-4. `error.type` / `error.code` của upstream **bị bỏ qua** — mã local luôn là `upstream_error`.
+4. Mã local vẫn là `upstream_error` (nằm ở `error.type`); mã của upstream được giữ lại ở `error.code` (§0.2).
 5. Alias được thay thế để không lộ model ID thật.
 
 ---
@@ -130,36 +148,36 @@ Tất cả đều bị prefix `prepare zen upstream request: ` / `prepare go ups
 
 | Message | Vị trí |
 |---|---|
-| `messages[%d] must be an object` | request.go:402, :567 |
-| `messages[%d]: %w` (bọc lỗi content block) | request.go:407, :512, :577, :585, :595 |
-| `messages[%d].tool_calls[%d] must be an object` | request.go:421 |
-| `messages[%d] has unsupported role %q` | request.go:445, :591 |
-| `tools[%d] must be a function tool` | request.go:451 |
-| `instructions: %w` | request.go:478 |
-| `input[%d] must be an object` | request.go:488 |
-| `input[%d] has unsupported Responses item type %q` | request.go:522 |
-| `input must be a string or array` | request.go:526 |
-| `tools[%d] must be an object` | request.go:531, :602 |
-| `system: %w` | request.go:561 |
-| `unsupported input protocol %q` | request.go:613 |
-| `messages[%d].tool_result[%d]: %w` | request.go:623 |
-| `messages[%d]: tool image result requires a call ID` | request.go:626 |
-| `unsupported output protocol %q` | request.go:679 |
-| `file content is not valid inside Responses instructions; send it as a message input item` | request.go:690 |
-| `file %q cannot be represented by Anthropic Messages without file data or a URL` | request.go:702 |
+| `messages[%d] must be an object` | request.go:448, :567 |
+| `messages[%d]: %w` (bọc lỗi content block) | request.go:453, :512, :577, :585, :595 |
+| `messages[%d].tool_calls[%d] must be an object` | request.go:467 |
+| `messages[%d] has unsupported role %q` | request.go:491, :591 |
+| `tools[%d] must be a function tool` | request.go:497 |
+| `instructions: %w` | request.go:524 |
+| `input[%d] must be an object` | request.go:534 |
+| `input[%d] has unsupported Responses item type %q` | request.go:568 |
+| `input must be a string or array` | request.go:572 |
+| `tools[%d] must be an object` | request.go:577, :602 |
+| `system: %w` | request.go:607 |
+| `unsupported input protocol %q` | request.go:659 |
+| `messages[%d].tool_result[%d]: %w` | request.go:669 |
+| `messages[%d]: tool image result requires a call ID` | request.go:672 |
+| `unsupported output protocol %q` | request.go:725 |
+| `file content is not valid inside Responses instructions; send it as a message input item` | request.go:736 |
+| `file %q cannot be represented by Anthropic Messages without file data or a URL` | request.go:748 |
 
 ### 2.2 Ghép tool-call / tool-result (request.go)
 
 | Message | Vị trí |
 |---|---|
-| `messages[%d]: assistant message appears before tool results for %s` | request.go:809 |
-| `messages[%d]: assistant message contains tool results` | request.go:812 |
-| `messages[%d]: tool call must contain id and name` | request.go:826 |
-| `messages[%d]: duplicate tool call id %q` | request.go:829 |
-| `messages[%d]: user message contains tool calls` | request.go:852 |
-| `messages[%d]: duplicate tool result %q` | request.go:856 |
-| `messages[%d]: tool result %q has no pending tool call` | request.go:859 |
-| `tool calls are missing results for %s` | request.go:894 |
+| `messages[%d]: assistant message appears before tool results for %s` | request.go:855 |
+| `messages[%d]: assistant message contains tool results` | request.go:858 |
+| `messages[%d]: tool call must contain id and name` | request.go:872 |
+| `messages[%d]: duplicate tool call id %q` | request.go:875 |
+| `messages[%d]: user message contains tool calls` | request.go:898 |
+| `messages[%d]: duplicate tool result %q` | request.go:902 |
+| `messages[%d]: tool result %q has no pending tool call` | request.go:905 |
+| `tool calls are missing results for %s` | request.go:940 |
 
 ### 2.3 Content block (`internal/protocol/content.go`, `tool_images.go`)
 
@@ -303,9 +321,10 @@ Chat = `{"error":{"message","type","param":null,"code":null}}` + `data: [DONE]`.
 
 ## 7. Nhận xét & lỗ hổng thiết kế
 
-1. **Không có mã lỗi cho client inference** — chỉ có `type` (OpenAI) / `error.type` (Anthropic),
-   và `code` luôn `null`. Client không phân biệt được upstream `invalid_request_error` với
-   `rate_limit_error` ngoài HTTP status + message.
+1. **Mã lỗi của upstream giờ được giữ lại** ở `error.code` (trước đây luôn `null`, xem §0.2),
+   nhưng `error.type` của envelope OpenAI vẫn là `upstream_error` và envelope Anthropic vẫn
+   không có slot `code` — client đọc được `unknown_parameter` hay `rate_limit_error` qua
+   `code`, còn `type` thì không phân biệt được.
 2. **`code` của admin không được WebUI dùng** — `webui/js/api.js:39` chỉ đọc `data.error.message`;
    grep `error.code` trong `webui/` không có kết quả. `webui/js/i18n.js` không có entry per-code.
    UI chỉ đặc biệt xử lý HTTP 401 và 204.
@@ -314,15 +333,18 @@ Chat = `{"error":{"message","type","param":null,"code":null}}` + `data: [DONE]`.
 4. **`invalid_protocol` sai lệch**: message nói "chat, responses, or anthropic" nhưng
    `protocol.Valid` (`internal/protocol/protocol.go:34`) cũng nhận `systemone`.
 5. **Lỗi conversion response không lộ ra client** — client luôn thấy 502 `unsupported upstream response`,
-   text chi tiết chỉ vào log (`gateway.go:462, :477`).
-6. **Validation chỉ chạy khi cross-protocol** — cùng protocol thì upstream tự reject.
+   text chi tiết chỉ vào log (`gateway.go:495, :510`).
+6. **Validation chỉ chạy khi cross-protocol** — cùng protocol thì upstream tự reject. Ngoại lệ
+   duy nhất là giới hạn output token: nó luôn được chuyển sang tên đúng của protocol đích
+   (`applyTokenLimitAlias`, `internal/protocol/request.go:46`), nên body pass-through không
+   mang field của protocol khác.
 7. **Panic luôn trả envelope Chat** kể cả trên `/v1/messages` và `/api/*` (`protocol.Chat` hard-code,
    `internal/telemetry/recovery.go:17`).
 8. **`httpx.WriteJSONStatus` nuốt lỗi encode** (`_ = json.NewEncoder(w).Encode(value)`) — body không
    serialize được sẽ bị cắt cụt mà không có mã lỗi nào.
 9. **Không có literal `model not found`** trong repo — text "model not found" chỉ có thể đến từ upstream
    qua `copyErrorResponse`; gateway tự nói `model %q is disabled after a failed availability check…`.
-10. **Alias không bao giờ lộ model ID thật** trong message (`substituteModelName`, gateway.go:776).
+10. **Alias không bao giờ lộ model ID thật** trong message (`substituteModelName`, gateway.go:846).
 
 ---
 

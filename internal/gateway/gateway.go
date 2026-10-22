@@ -250,6 +250,24 @@ func (g *Gateway) writeError(w http.ResponseWriter, protocol wire.Protocol, stat
 	wire.WriteError(w, protocol, status, message, kind, requestID)
 }
 
+// writeErrorWithCode answers an inference error an upstream caused, carrying
+// the error code the upstream reported in the body's code slot. With
+// errors.simple_body enabled the compact {"error":{"code","message"}} shape is
+// used for every protocol and the upstream's code stands in for the
+// gateway's kind, so a client reads why the request was refused. Otherwise
+// the error keeps the envelope its protocol expects and the code fills the
+// envelope's code slot, which was empty before.
+func (g *Gateway) writeErrorWithCode(w http.ResponseWriter, protocol wire.Protocol, status int, message, kind, code, requestID string) {
+	if g.cfg.Errors.SimpleBody {
+		if code == "" {
+			code = kind
+		}
+		wire.WriteSimpleError(w, status, code, message, requestID)
+		return
+	}
+	wire.WriteErrorCode(w, protocol, status, message, kind, code, requestID)
+}
+
 func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(context.WithValue(r.Context(), requestShapeContextKey{}, &requestShape{}))
@@ -726,7 +744,8 @@ func (g *Gateway) prepareRouteBodies(from wire.Protocol, route models.Route, inp
 // copyErrorResponse relays a non-2xx upstream reply as an error in the
 // client's protocol. It keeps the status and any Retry-After, and takes the
 // message from a JSON body's error.message or message, falling back to the
-// status text.
+// status text. The error code the upstream reported, when it named one, is
+// kept as well, so a client can tell why the request was refused.
 //
 // An aliased request must not learn the real upstream model ID from the
 // upstream's own error text: a rejection routinely names the model it was asked
@@ -739,12 +758,49 @@ func (g *Gateway) copyErrorResponse(w http.ResponseWriter, protocol wire.Protoco
 		w.Header().Set("Retry-After", retryAfter)
 	}
 	message := http.StatusText(resp.StatusCode)
+	code := ""
 	var value map[string]any
 	if json.Unmarshal(body, &value) == nil {
 		message = jsonutil.FirstString(jsonutil.StringAt(value, "error", "message"), jsonutil.StringAt(value, "message"), message)
+		code = upstreamErrorCode(value)
 	}
 	message = substituteModelName(message, clientModel, realModel)
-	g.writeError(w, protocol, resp.StatusCode, message, "upstream_error", requestID)
+	g.writeErrorWithCode(w, protocol, resp.StatusCode, message, "upstream_error", code, requestID)
+}
+
+// upstreamErrorCode reads the error code an upstream reported, so a client
+// can tell why the request was refused instead of only the generic
+// upstream_error. The code comes from the body's error.code, then its
+// error.type; a value that is not a plain code is ignored.
+func upstreamErrorCode(value map[string]any) string {
+	for _, key := range []string{"code", "type"} {
+		if code := jsonutil.StringAt(value, "error", key); isErrorCode(code) {
+			return code
+		}
+	}
+	return ""
+}
+
+// isErrorCode reports whether s is a plain error code: letters, digits, dot,
+// dash and underscore, starting with a letter. Anything else is free text, not
+// a code, and must not be echoed as one.
+func isErrorCode(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9', c == '.', c == '-', c == '_':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // plainJSONDocument reports whether body is one complete JSON object, i.e. the

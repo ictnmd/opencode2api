@@ -47,11 +47,11 @@
   },
   "prefer": "go",
   "reasoning": {
-  "errors": {
-    "simple_body": false
-  },
     "effort": "high",
     "effort_by_model": {}
+  },
+  "errors": {
+    "simple_body": false
   },
   "rotation": {
     "sota": {

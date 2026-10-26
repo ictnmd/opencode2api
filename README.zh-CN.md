@@ -96,7 +96,7 @@ WARP 只需要出站 UDP（Cloudflare 端点端口 `2408`），因此镜像的�
 
 ### Docker 环境变量覆盖层（`O2A_*`）
 
-Compose 同时转发可选的 `O2A_*` 变量，入口脚本在**每次**启动时将它们合并到 `/var/lib/opencode2api/config.json`（留空或未设置表示保留 JSON 中的原值；`_FILE` 变体优先于普通变体）。覆盖范围包括 Key、上游地址、代理、重试 / 模型 / 日志设置、WebUI 凭据、轮转顺序和监听地址，因此可以只用 `.env` 完成部署：
+Compose 同时转发可选的 `O2A_*` 变量，入口脚本在**每次**启动时将它们合并到 `/var/lib/opencode2api/config.json`（留空或未设置表示保留 JSON 中的原值；`_FILE` 变体优先于普通变体）。覆盖范围包括 Key、上游地址、代理、WARP 出口、重试 / 模型 / 日志设置、WebUI 凭据、轮转顺序和监听地址，因此可以只用 `.env` 完成部署：
 
 ```bash
 cp .env.example .env   # 填写取值后：

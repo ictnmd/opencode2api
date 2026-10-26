@@ -60,6 +60,21 @@ La directory di configurazione deve essere scrivibile per migrare la password, s
 
 ## Docker
 
+> **Diverso da upstream.** Questo fork compila l'immagine dai sorgenti del
+> repository (`docker-compose.yml` → `build: context: .`), perché la
+> configurazione tramite variabili `O2A_*` richiede l'entrypoint con `jq`:
+> l'immagine pubblicata da upstream non include questo overlay. La
+> configurazione può essere fornita **interamente dal file `.env`**, senza
+> `config.json` sull'host: `cp .env.example .env`, compila i valori, poi
+> `docker compose up -d --build`. L'entrypoint inizializza la configurazione da
+> `config.example.json` incluso nell'immagine e applica sopra le variabili
+> `O2A_*` **a ogni avvio**. Vedi
+> [README.md](README.md#docker-env-overlay-o2a_) e
+> [docs/env-overlay.md](docs/env-overlay.md) per il meccanismo, la precedenza
+> (`_FILE` > variabile semplice > JSON) e la tabella completa delle variabili.
+> La sezione Docker che segue descrive il comportamento dell'immagine upstream e
+> resta valida solo se usi `image:` invece di `build:`.
+
 L'immagine pubblicata è `ghcr.io/jasonxu114514/opencode2api`.
 
 ```bash

@@ -112,9 +112,9 @@ The last two variables become `LISTEN_ADDRESS` and `WEBUI_LISTEN_ADDRESS` inside
 The compose file also forwards optional `O2A_*` variables, which the container
 entrypoint merges over `/var/lib/opencode2api/config.json` on **every** start
 (empty/unset means keep the JSON value; a `_FILE` variant wins over its plain
-counterpart). This covers keys, upstream URLs, proxies, retry/model/log
-settings, WebUI credentials, rotation order, and listeners — so a deploy can be
-driven by `.env` alone:
+counterpart). This covers keys, upstream URLs, proxies, WARP egress, retry/model/
+log settings, WebUI credentials, rotation order, and listeners — so a deploy can
+be driven by `.env` alone:
 
 ```bash
 cp .env.example .env   # fill in values, then:

@@ -75,9 +75,12 @@ biến _FILE  >  biến thường  >  giá trị trong JSON
 
 Tất cả đều optional.
 
-Bảng dưới đây liệt kê **mọi trường** của `config.example.json`, nên overlay `O2A_*`
-giờ phủ kín toàn bộ config: không còn trường nào buộc phải sửa `config.json` bằng
-tay trong container.
+Bảng dưới đây liệt kê **mọi trường** của `config.example.json`, cộng thêm
+`models.anonymous_backoff` (object tùy chọn, không có trong file mẫu), nên
+overlay `O2A_*` giờ phủ kín toàn bộ config: không còn trường nào buộc phải sửa
+`config.json` bằng tay trong container. Hai ngoại lệ có chủ đích:
+`webui.password_hash` (máy sinh, không phải cấu hình) và `server_key_metadata`
+(ghi bởi WebUI theo từng key, không có dạng phẳng trong env).
 
 | Biến môi trường                               | Ghi vào config                            | Format / giá trị hợp lệ                                                                      | Ví dụ                                                      |
 | --------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
@@ -88,6 +91,10 @@ tay trong container.
 | `O2A_GO_KEYS`                                 | `go_keys`                                 | Comma-separated                                                                              | `go-key-aaa111,go-key-bbb222`                              |
 | `O2A_GO_KEYS_FILE`                            | `go_keys` (thắng trên)                    | Path trong container, format như trên                                                        | `/run/secrets/go_keys`                                     |
 | `O2A_ANONYMOUS`                               | `anonymous`                               | `true` / `false`                                                                             | `true`                                                     |
+| `O2A_WARP_ENABLED`                            | `warp.enabled`                            | `true` / `false`; bật thì traffic model miễn phí đi qua WARP, không dùng proxy                | `false`                                                    |
+| `O2A_WARP_POOL_SIZE`                          | `warp.pool_size`                          | Số nguyên 1–32; số exit WARP giữ ấm tối đa                                                   | `2`                                                        |
+| `O2A_WARP_STACK`                              | `warp.stack`                              | `ipv6` / `ipv4` / `dual`                                                                     | `ipv6`                                                     |
+| `O2A_WARP_SOURCE_IPV6`                        | `warp.source_ipv6`                        | Prefix IPv6 (`/64` hoặc ngắn hơn); bắt buộc `warp.stack=ipv6`                                | `2001:db8:1::/64`                                          |
 | `O2A_UPSTREAM_ZEN`                            | `upstream.zen`                            | URL                                                                                          | `https://opencode.ai/zen`                                  |
 | `O2A_UPSTREAM_GO`                             | `upstream.go`                             | URL                                                                                          | `https://opencode.ai/zen/go`                               |
 | `O2A_UPSTREAM_ANONYMOUS`                      | `upstream.anonymous`                      | URL của lane anonymous                                                                       | `https://opencode.ai/inference`                            |
@@ -100,13 +107,16 @@ tay trong container.
 | `O2A_MODEL_ALIASES`                           | `models.aliases`                          | **JSON object** `{"tên-client":"model-thật"}`; sai định dạng bị bỏ qua                       | `{"muse-spark-1.3":"muse-spark-1.3-contributor-free"}`     |
 | `O2A_MODELS_PROTOCOLS`                        | `models.protocols`                        | **JSON object** `{"tên-model":"protocol"}`; protocol: `chat`, `responses`, `anthropic`       | `{"custom-model":"chat"}`                                  |
 | `O2A_MODELS_FREE_ONLY`                        | `models.free_only`                        | `true` / `false`; chỉ expose và route model miễn phí                                         | `false`                                                    |
+| `O2A_MODELS_ANONYMOUS_BACKOFF_THRESHOLD`      | `models.anonymous_backoff.threshold`      | Số nguyên ≥ 1; số lần lỗi liên tiếp trước khi tạm dừng lane anonymous                        | `6`                                                        |
+| `O2A_MODELS_ANONYMOUS_BACKOFF_BASE_HOURS`     | `models.anonymous_backoff.base_hours`     | Số nguyên ≥ 1; thời gian tạm dừng cơ sở (giờ)                                                | `1`                                                        |
+| `O2A_MODELS_ANONYMOUS_BACKOFF_MAX_HOURS`      | `models.anonymous_backoff.max_hours`      | Số nguyên ≥ `base_hours`; trần thời gian tạm dừng (giờ)                                      | `24`                                                       |
 | `O2A_LOG_LEVEL`                               | `logging.level`                           | `debug` / `info` / `warn` / `error`                                                          | `info`                                                     |
 | `O2A_LOGGING_RING_SIZE`                       | `logging.ring_size`                       | Số nguyên 100–50000 (số dòng log giữ trong ring buffer)                                      | `2000`                                                     |
 | `O2A_LOGGING_DUMP_REQUEST_BODIES`             | `logging.dump_request_bodies`             | `true` / `false`; cần log level `debug` mới ghi body ra ngoài                                | `false`                                                    |
 | `O2A_PREFER`                                  | `prefer`                                  | `go` / `zen`                                                                                 | `go`                                                       |
 | `O2A_REASONING_EFFORT`                        | `reasoning.effort`                        | `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `none`                                   | `high`                                                     |
 | `O2A_REASONING_EFFORT_BY_MODEL`               | `reasoning.effort_by_model`               | **JSON object** `{"tên-model":"level"}`; model không có trong object dùng `reasoning.effort` | `{"claude-opus-5":"max"}`                                  |
-| `O2A_ERRORS_SIMPLE_BODY`                       | `errors.simple_body`                      | `true` / `false`; lỗi API suy luận dùng `{"error":{"code","message"}}` cho mọi giao thức         | `false`                                                    |
+| `O2A_ERRORS_SIMPLE_BODY`                      | `errors.simple_body`                      | `true` / `false`; lỗi API suy luận dùng `{"error":{"code","message"}}` cho mọi giao thức     | `false`                                                    |
 | `O2A_PERFORMANCE_MAX_IDLE_CONNS`              | `performance.max_idle_conns`              | Số nguyên; idle connection giữ trong pool                                                    | `2048`                                                     |
 | `O2A_PERFORMANCE_MAX_IDLE_CONNS_PER_HOST`     | `performance.max_idle_conns_per_host`     | Số nguyên; idle connection cho mỗi host                                                      | `256`                                                      |
 | `O2A_PERFORMANCE_MAX_CONNS_PER_HOST`          | `performance.max_conns_per_host`          | Số nguyên; `0` = không giới hạn                                                              | `0`                                                        |
@@ -115,6 +125,8 @@ tay trong container.
 | `O2A_PERFORMANCE_FAILURE_COOLDOWN_SECONDS`    | `performance.failure_cooldown_seconds`    | Số nguyên (giây); cooldown cơ sở sau lỗi                                                     | `15`                                                       |
 | `O2A_PERFORMANCE_ATTEMPT_TIMEOUT_SECONDS`     | `performance.attempt_timeout_seconds`     | Số nguyên (giây); `0` = dùng timeout của request                                             | `0`                                                        |
 | `O2A_PERFORMANCE_FIRST_EVENT_TIMEOUT_SECONDS` | `performance.first_event_timeout_seconds` | Số nguyên (giây); `0` = tắt, tối đa 86400                                                    | `0`                                                        |
+| `O2A_PERFORMANCE_MAX_ANONYMOUS_EXITS`         | `performance.max_anonymous_exits`         | Số nguyên; số exit proxy tĩnh tối đa mỗi request anonymous; `0` = cap mặc định của app       | `8`                                                        |
+| `O2A_PERFORMANCE_FREE_TIER_BLOCK_SECONDS`     | `performance.free_tier_block_seconds`     | Số nguyên (giây); cooldown cho exit bị free tier đánh dấu; `0` = mặc định của app            | `900`                                                      |
 | `O2A_WEBUI_ENABLED`                           | `webui.enabled`                           | `true` / `false`                                                                             | `true`                                                     |
 | `O2A_WEBUI_USERNAME`                          | `webui.username`                          | Chuỗi                                                                                        | `admin`                                                    |
 | `O2A_WEBUI_PASSWORD`                          | `webui.password`                          | Chuỗi, tối thiểu 10 ký tự (sẽ được hash lúc start)                                           | `change-me-min-10-chars`                                   |
@@ -171,6 +183,13 @@ Ngoài ra compose vẫn giữ các biến cũ (không thuộc overlay `jq`, mà 
    qua — vẫn cấu hình bằng `config.json` như cũ.
 7. **File `.env` chứa secret** — không commit (đã có trong `.gitignore`), chỉ
    commit `.env.example` với placeholder.
+8. **`O2A_WARP_ENABLED=true` là fail-closed.** App Go chỉ khởi động khi đã đăng
+   ký được ít nhất một exit WARP, nên container cần UDP ra Cloudflare (port
+   `2408`). Mạng chặn UDP thì container **crash-loop** ngay sau khi bật, không
+   âm thầm quay lại dùng proxy. Tắt lại bằng cách bỏ biến khỏi `.env` **và** sửa
+   `warp.enabled` trong config runtime trên volume về `false` (xem mục khôi phục
+   bên dưới), hoặc set `O2A_WARP_ENABLED=false` — giá trị `false` vẫn được ghi
+   (bool nhận cả `false`), khác với chuỗi rỗng.
 
 ### Khôi phục khi giá trị sai đã bị ghi vào volume
 

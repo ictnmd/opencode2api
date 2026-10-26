@@ -62,6 +62,19 @@ Thư mục cấu hình phải ghi được để thực hiện việc chuyển m
 
 ## Docker
 
+> **Khác với upstream.** Bản fork này build image từ chính mã nguồn trong repo
+> (`docker-compose.yml` → `build: context: .`) vì phần cấu hình bằng biến môi
+> trường `O2A_*` cần entrypoint có `jq` — image phát hành của upstream không có
+> lớp phủ này. Cấu hình có thể đặt **hoàn toàn bằng `.env`**, không cần
+> `config.json` trên host: `cp .env.example .env`, điền giá trị rồi
+> `docker compose up -d --build`. Entrypoint seed config từ
+> `config.example.json` trong image rồi áp `O2A_*` lên trên **mỗi lần start**.
+> Xem [README.md](README.md#docker-env-overlay-o2a_) và
+> [docs/env-overlay.md](docs/env-overlay.md) để biết cơ chế, thứ tự ưu tiên
+> (`_FILE` > biến thường > JSON) và bảng biến đầy đủ. Phần Docker dưới đây mô tả
+> hành vi của image upstream và chỉ còn đúng khi bạn dùng `image:` thay vì
+> `build:`.
+
 Image được phát hành là `ghcr.io/jasonxu114514/opencode2api`.
 
 ```bash

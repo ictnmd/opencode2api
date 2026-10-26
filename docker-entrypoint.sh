@@ -227,6 +227,12 @@ overlay_config() {
 
     # Upstream and proxies.
     apply_bool O2A_ANONYMOUS '.anonymous' 'anonymous'
+    # WARP egress. Enabling it is fail-closed in the gateway: a container that
+    # cannot reach Cloudflare exits at startup instead of silently using proxies.
+    apply_bool O2A_WARP_ENABLED '.warp.enabled' 'warp.enabled'
+    apply_int O2A_WARP_POOL_SIZE '.warp.pool_size' 'warp.pool_size'
+    apply_str O2A_WARP_STACK '.warp.stack' 'warp.stack'
+    apply_str O2A_WARP_SOURCE_IPV6 '.warp.source_ipv6' 'warp.source_ipv6'
     apply_str O2A_UPSTREAM_ZEN '.upstream.zen' 'upstream.zen'
     apply_str O2A_UPSTREAM_GO '.upstream.go' 'upstream.go'
     apply_str O2A_UPSTREAM_ANONYMOUS '.upstream.anonymous' 'upstream.anonymous'
@@ -240,6 +246,11 @@ overlay_config() {
     apply_json_object O2A_MODEL_ALIASES '.models.aliases' 'models.aliases'
     apply_json_object O2A_MODELS_PROTOCOLS '.models.protocols' 'models.protocols'
     apply_bool O2A_MODELS_FREE_ONLY '.models.free_only' 'models.free_only'
+    # The anonymous lane's circuit breaker is an optional object: any sub-field
+    # set here creates it, and the Go side fills the fields left unset.
+    apply_int O2A_MODELS_ANONYMOUS_BACKOFF_THRESHOLD '.models.anonymous_backoff.threshold' 'models.anonymous_backoff.threshold'
+    apply_int O2A_MODELS_ANONYMOUS_BACKOFF_BASE_HOURS '.models.anonymous_backoff.base_hours' 'models.anonymous_backoff.base_hours'
+    apply_int O2A_MODELS_ANONYMOUS_BACKOFF_MAX_HOURS '.models.anonymous_backoff.max_hours' 'models.anonymous_backoff.max_hours'
     apply_str O2A_LOG_LEVEL '.logging.level' 'logging.level'
     apply_int O2A_LOGGING_RING_SIZE '.logging.ring_size' 'logging.ring_size'
     apply_bool O2A_LOGGING_DUMP_REQUEST_BODIES '.logging.dump_request_bodies' 'logging.dump_request_bodies'
@@ -258,6 +269,8 @@ overlay_config() {
     apply_int O2A_PERFORMANCE_FAILURE_COOLDOWN_SECONDS '.performance.failure_cooldown_seconds' 'performance.failure_cooldown_seconds'
     apply_int O2A_PERFORMANCE_ATTEMPT_TIMEOUT_SECONDS '.performance.attempt_timeout_seconds' 'performance.attempt_timeout_seconds'
     apply_int O2A_PERFORMANCE_FIRST_EVENT_TIMEOUT_SECONDS '.performance.first_event_timeout_seconds' 'performance.first_event_timeout_seconds'
+    apply_int O2A_PERFORMANCE_MAX_ANONYMOUS_EXITS '.performance.max_anonymous_exits' 'performance.max_anonymous_exits'
+    apply_int O2A_PERFORMANCE_FREE_TIER_BLOCK_SECONDS '.performance.free_tier_block_seconds' 'performance.free_tier_block_seconds'
 
     # Listeners. An explicit -listen / -web-listen flag already wins at
     # runtime, so the flag keeps priority when both are provided.

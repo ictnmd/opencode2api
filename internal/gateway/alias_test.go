@@ -39,7 +39,9 @@ func testGateway(t *testing.T, upstreamURL string, models config.ModelsConfig) *
 	if err != nil {
 		t.Fatalf("normalize config: %v", err)
 	}
-	gateway, err := New(normalized, slog.New(slog.NewTextHandler(io.Discard, nil)), telemetry.Monitor())
+	// A nil WARP pool keeps these tests on the plain transport path; WARP is
+	// opt-in and orthogonal to aliasing.
+	gateway, err := New(normalized, slog.New(slog.NewTextHandler(io.Discard, nil)), telemetry.Monitor(), nil)
 	if err != nil {
 		t.Fatalf("new gateway: %v", err)
 	}

@@ -219,6 +219,11 @@ async function loadAvailability() {
         "当前模型目录中没有符合免费资格的模型。",
         "availability.noneEligible",
       );
+    else if (value.probe_enabled === false)
+      $("#availability-error").textContent = t(
+        "自动探测已关闭（models.probe_free_models=false）：状态不会自行变化，恢复后下一个调度周期重新探测。",
+        "availability.probeOff",
+      );
   } catch (error) {
     $("#availability-error").textContent = error.message;
   }

@@ -63,6 +63,7 @@ type RuntimeController struct {
 	updateMu           sync.Mutex
 	effective          EffectiveListeners
 	metadata           *modelcatalog.PricingRegistry
+	availabilityMu     sync.Mutex
 	availabilityCancel context.CancelFunc
 	// warpPool is the pool shared by successive runtimes when the WARP size
 	// and stack are unchanged. warpKey is the identity used for that reuse.
@@ -148,7 +149,7 @@ func RuntimeManager(root context.Context, configPath string, cfg config.Config, 
 	telemetry.SetLogLevel(manager.level, cfg.Logging.Level)
 	manager.start(runtime)
 	manager.metadata.Start(root)
-	manager.startAvailabilityChecks()
+	manager.syncAvailabilityChecks(runtime.config)
 	return manager, nil
 }
 
@@ -411,6 +412,10 @@ func (m *RuntimeController) applyLocked(candidate config.Config, persist bool) (
 			time.AfterFunc(grace, retired.Close)
 		}
 	}
+	// The probe loop reads the runtime it works on through m.current, so it is
+	// started (or stopped) only after the swap: the first pass then sees the
+	// configuration that was just applied.
+	m.syncAvailabilityChecks(normalized)
 	m.logger.Info("configuration applied", "component", "config", "event", "config_applied", "restart_required", result.RestartRequired, "restart_fields", result.RestartFields)
 	return result, nil
 }
@@ -434,9 +439,7 @@ func (m *RuntimeController) Reload() (ApplyResult, error) {
 // Shutdown stops the free-model availability checks and the current runtime's
 // background loops.
 func (m *RuntimeController) Shutdown() {
-	if m.availabilityCancel != nil {
-		m.availabilityCancel()
-	}
+	m.stopAvailabilityChecks()
 	if current := m.current.Load(); current != nil {
 		current.cancel()
 	}

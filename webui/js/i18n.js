@@ -279,6 +279,8 @@ const DICTIONARY = {
       "config.upstream.caption":
         "anonymous will use every available proxy; an explicit protocol mapping wins over inferring the protocol from the model name.",
       "config.upstream.freeOnly": "Only expose free models (even when Zen / Go Keys are configured)",
+      "config.upstream.probeFree":
+        "Probe free-model availability automatically (sends real requests upstream)",
       "config.upstream.attempts": "Max attempts per Key Tier",
       "config.upstream.timeout": "Request timeout (seconds)",
       "config.upstream.refresh": "Model refresh interval (seconds)",
@@ -564,6 +566,8 @@ const DICTIONARY = {
       "availability.switchManual": "Switch to manual",
       "availability.noneEligible":
         "No model in the current catalog qualifies as free.",
+      "availability.probeOff":
+        "Automatic probing is off (models.probe_free_models=false): these states will not change on their own. Re-enable it and the next scheduler pass probes again.",
 
       "config.restartNotice":
         "Saved but not in effect yet: {0}. The current API is {1}, the WebUI is {2}. Please restart the process.",
@@ -844,6 +848,8 @@ const DICTIONARY = {
       "config.upstream.caption":
         "anonymous sẽ dùng hết các Proxy khả dụng; ánh xạ protocol tường minh được ưu tiên hơn việc suy luận từ tên mô hình.",
       "config.upstream.freeOnly": "Chỉ công khai mô hình miễn phí (kể cả khi đã cấu hình Zen / Go Key)",
+      "config.upstream.probeFree":
+        "Tự dò khả dụng mô hình miễn phí (gửi request thật tới upstream)",
       "config.upstream.attempts": "Số lần thử tối đa cho mỗi Key Tier",
       "config.upstream.timeout": "Timeout của request (giây)",
       "config.upstream.refresh": "Làm mới mô hình (giây)",
@@ -1130,6 +1136,8 @@ const DICTIONARY = {
       "availability.switchManual": "Chuyển sang thủ công",
       "availability.noneEligible":
         "Danh mục mô hình hiện tại không có mô hình nào đủ điều kiện miễn phí.",
+      "availability.probeOff":
+        "Tự động dò đang tắt (models.probe_free_models=false): trạng thái sẽ không tự thay đổi. Bật lại thì chu kỳ lập lịch kế tiếp sẽ dò lại.",
 
       "config.restartNotice":
         "Đã lưu nhưng chưa có hiệu lực: {0}. API hiện tại {1}, WebUI {2}. Vui lòng khởi động lại tiến trình.",
@@ -1418,6 +1426,8 @@ const DICTIONARY = {
         "anonymous userà ogni proxy disponibile; una mappatura esplicita di protocollo prevale sull'inferenza del protocollo dal nome del modello.",
       "config.upstream.freeOnly":
         "Espone solo modelli gratuiti (anche quando sono configurate Zen / Go Key)",
+      "config.upstream.probeFree":
+        "Verifica automaticamente la disponibilità dei modelli gratuiti (invia richieste reali all'upstream)",
       "config.upstream.attempts": "Tentativi massimi per Key Tier",
       "config.upstream.timeout": "Timeout richiesta (secondi)",
       "config.upstream.refresh": "Intervallo di refresh modelli (secondi)",
@@ -1707,6 +1717,8 @@ const DICTIONARY = {
       "availability.switchManual": "Passa a manuale",
       "availability.noneEligible":
         "Nessun modello nel catalogo corrente è idoneo come gratuito.",
+      "availability.probeOff":
+        "La verifica automatica è disattivata (models.probe_free_models=false): questi stati non cambieranno da soli. Riattivandola, il passaggio successivo dello scheduler verifica di nuovo.",
 
       "config.restartNotice":
         "Salvato ma non ancora in vigore: {0}. L'API corrente è {1}, la WebUI è {2}. Riavvia il processo.",

@@ -339,6 +339,8 @@ System One 使用原生 `noul` 类型询问“1+1 是否等于 2”，不注入�
 
 状态保存在 `config.json.<上游地址指纹>.availability.json`，重启后保留，按 Zen 上游 URL 隔离。后台每分钟检查到期项，跳过手动控制的模型，串行探测其余模型，每条通道最多等待 60 秒。
 
+将 `models.probe_free_models` 设为 `false` 可完全关闭探测：进程不再发出任何探测请求，因此不会自动禁用模型，`reasoning.effort=auto` 也没有已验证的档位可下发，可用性页面会注明该表不会自行变化。该开关默认 `true`，在下次应用配置（WebUI 保存或 reload）时生效，无需重启；重新打开后会立即探测所有到期模型。它与 `models.refresh_seconds` 相互独立：目录刷新仍在运行，因为正是它让模型可被路由。已被禁用的模型保持禁用，直到你恢复它或重新开启探测。
+
 管理接口：`GET /api/models/availability` 查看状态；`POST /api/models/restore` 携带 `{"model":"MODEL_ID"}` 恢复并进入手动控制；`POST /api/models/manual` 携带 `{"model":"MODEL_ID","manual":true|false}` 在手动与自动之间切换。均需管理登录，写入接口还需 CSRF 校验。
 
 ### 会话与代理
@@ -377,6 +379,7 @@ Key 初始化时均衡分配到代理。真实流量可以触发代理检查、K
 | `models.protocols`          | `{}`；按模型 ID 覆盖原生协议。                                                        |
 | `models.aliases`            | `{}`；客户端名称 → 真实模型 ID，响应返回客户端使用的名称。                            |
 | `models.free_only`          | `false`；即使配置了 Zen / Go Key，也只暴露和路由免费模型。                            |
+| `models.probe_free_models`  | `true`；设为 `false` 关闭后台免费模型可用性探测，不再向上游发送任何探测请求。          |
 | `models.anonymous_backoff`  | 缺省关闭；`{threshold, base_hours, max_hours}`，默认 6、1、24。                       |
 | `reasoning.effort`          | 空（关闭）；可选 `auto`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`none`。 |
 | `reasoning.effort_by_model` | `{}`；按模型 ID 覆盖 `reasoning.effort`。                                             |

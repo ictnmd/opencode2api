@@ -6,10 +6,12 @@ import (
 )
 
 // handleAvailability lists the free models with their probe state, so the
-// availability page can show which ones are disabled and why.
+// availability page can show which ones are disabled and why. probe_enabled
+// reports the models.probe_free_models switch, so the page can say that the
+// state will not change while automatic probing is off.
 func (a *Server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"models": a.manager.AvailabilitySnapshot()})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"models": a.manager.AvailabilitySnapshot(), "probe_enabled": a.manager.ProbeEnabled()})
 }
 
 // handleRestoreModel returns a disabled free model to manual control, which

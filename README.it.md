@@ -275,6 +275,8 @@ Il controllo manuale sospende anche il rilevamento dei livelli per `reasoning.ef
 
 Lo stato persiste tra i riavvii in `config.json.<upstream-fingerprint>.availability.json`, separato per URL upstream Zen. Lo scheduler in background verifica ogni minuto i modelli in scadenza, ignora quelli sotto controllo manuale e controlla gli altri in sequenza, con un timeout di 60 secondi per canale. Se non sono disponibili canali, non avviene alcuna disabilitazione automatica.
 
+Impostando `models.probe_free_models` a `false` la verifica si ferma del tutto: nessuna richiesta di probe lascia il processo, quindi nessun modello viene disabilitato automaticamente, `reasoning.effort=auto` non ha alcun livello verificato da iniettare e la pagina della disponibilità segnala che la tabella non cambierà da sola. L'interruttore vale `true` per impostazione predefinita, ha effetto alla successiva configurazione applicata (salvataggio da WebUI o reload) senza riavvio, e riattivandolo verifica subito ogni modello in scadenza. È indipendente da `models.refresh_seconds`: il refresh del catalogo continua, perché è ciò che rende i modelli instradabili. I modelli già disabilitati restano tali finché non li ripristini o non riattivi la verifica.
+
 Endpoint di amministrazione (richiede l'accesso; le scritture richiedono anche CSRF): `GET /api/models/availability`, `POST /api/models/restore` con `{"model":"MODEL_ID"}` (ripristina e attiva il controllo manuale) e `POST /api/models/manual` con `{"model":"MODEL_ID","manual":true|false}` per passare dal controllo manuale a quello automatico e viceversa.
 
 ### Sessioni e proxy
@@ -311,6 +313,7 @@ Consulta [config.example.json](config.example.json) per una configurazione inizi
 | `models.refresh_seconds`    | `300`; minimo 1.                                                              |
 | `models.protocols`          | `{}`; override del protocollo nativo per modello.                             |
 | `models.free_only`          | `false`; mostra e instrada solo modelli gratuiti, anche con chiavi Zen o Go.  |
+| `models.probe_free_models`  | `true`; `false` ferma la verifica in background della disponibilità dei modelli gratuiti, quindi nessuna richiesta di probe raggiunge l'upstream. |
 | `reasoning.effort`          | Vuoto (disattivato); `minimal`, `low`, `medium`, `high`, `xhigh`, `max` o `none`. |
 | `reasoning.effort_by_model` | `{}`; override di `reasoning.effort` per modello.                             |
 

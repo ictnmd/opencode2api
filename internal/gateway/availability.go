@@ -7,6 +7,7 @@ import (
 
 	"time"
 
+	"opencode2api/internal/config"
 	"opencode2api/internal/models"
 )
 
@@ -62,10 +63,21 @@ func (m *RuntimeController) SetManualModel(model string, manual bool) error {
 	return errors.New("unknown free model")
 }
 
-// startAvailabilityChecks probes due free models at once and then every
-// minute until Shutdown or the root context stops it. It runs on the
-// controller's root context, so it survives runtime swaps.
+// startAvailabilityChecks starts the free-model probe loop unless it is
+// already running. The loop runs on the controller's root context, so it
+// survives runtime swaps.
 func (m *RuntimeController) startAvailabilityChecks() {
+	m.availabilityMu.Lock()
+	defer m.availabilityMu.Unlock()
+	m.startAvailabilityChecksLocked()
+}
+
+// startAvailabilityChecksLocked starts the loop when no cancel func is stored;
+// the caller holds availabilityMu.
+func (m *RuntimeController) startAvailabilityChecksLocked() {
+	if m.availabilityCancel != nil {
+		return
+	}
 	ctx, cancel := context.WithCancel(m.root)
 	m.availabilityCancel = cancel
 	go func() {
@@ -80,6 +92,37 @@ func (m *RuntimeController) startAvailabilityChecks() {
 			}
 		}
 	}()
+}
+
+// stopAvailabilityChecks cancels the probe loop when it is running. A probe in
+// flight sees its context end and records nothing.
+func (m *RuntimeController) stopAvailabilityChecks() {
+	m.availabilityMu.Lock()
+	defer m.availabilityMu.Unlock()
+	if m.availabilityCancel == nil {
+		return
+	}
+	m.availabilityCancel()
+	m.availabilityCancel = nil
+}
+
+// syncAvailabilityChecks starts or stops the free-model probe loop so it
+// matches cfg. Turning models.probe_free_models off therefore takes effect on
+// the next configuration apply, without a restart, and turning it back on
+// probes every due model at once.
+func (m *RuntimeController) syncAvailabilityChecks(cfg config.Config) {
+	if cfg.Models.FreeModelProbeEnabled() {
+		m.startAvailabilityChecks()
+		return
+	}
+	m.stopAvailabilityChecks()
+}
+
+// ProbeEnabled reports whether the background free-model probe is enabled by
+// the current configuration, so the availability page can explain a state that
+// will not change on its own.
+func (m *RuntimeController) ProbeEnabled() bool {
+	return m.Config().Models.FreeModelProbeEnabled()
 }
 
 // checkFreeModels probes, one at a time, every free model under automatic
@@ -103,6 +146,11 @@ func (m *RuntimeController) checkFreeModels(ctx context.Context) {
 		}
 		result := r.gateway.probeFreeModel(ctx, item.Model)
 		if !result.attempted || ctx.Err() != nil {
+			// No request left the process, so nothing was observed. Logging the
+			// reason at debug is what tells an operator why a due model never
+			// shows a new check time (no lane, paused breaker, unsupported
+			// protocol).
+			m.logger.Debug("free model availability probe skipped", "component", "models", "event", "availability_skipped", "model", item.Model, "reason", result.reason)
 			continue
 		}
 		// Config changes may replace credentials or endpoints during a probe.

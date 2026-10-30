@@ -173,12 +173,27 @@ type ModelsConfig struct {
 	// FreeOnly limits discovery and routing to free models, even when Zen or
 	// Go keys could serve paid ones. Free models may still fall back to keys.
 	FreeOnly bool `json:"free_only"`
+	// ProbeFreeModels controls the background free-model availability probe:
+	// a short real request that decides whether a free model still answers and,
+	// with reasoning.effort "auto", the highest effort it accepts. It is a
+	// pointer so an absent value keeps the historical behavior (probing on);
+	// false stops every probe request, which also stops the automatic disable
+	// of a model that no longer answers and leaves "auto" without a verified
+	// ceiling to inject.
+	ProbeFreeModels *bool `json:"probe_free_models,omitempty"`
 	// AnonymousBackoff configures a circuit breaker for the keyless lane:
 	// after Threshold consecutive failed attempts, or when every exit is under
 	// the free tier's IP block, the lane pauses for BaseHours, doubling on
 	// every further trip up to MaxHours. An absent block leaves the lane
 	// unpaused, which is the previous behavior.
 	AnonymousBackoff *AnonymousBackoffConfig `json:"anonymous_backoff,omitempty"`
+}
+
+// FreeModelProbeEnabled reports whether the background free-model availability
+// probe should run. An absent models.probe_free_models means enabled, so an
+// older configuration keeps probing exactly as before.
+func (m ModelsConfig) FreeModelProbeEnabled() bool {
+	return m.ProbeFreeModels == nil || *m.ProbeFreeModels
 }
 
 // AnonymousBackoffConfig tunes the keyless lane's circuit breaker. Zero fields
@@ -388,6 +403,12 @@ func Normalize(path string, cfg Config) (Config, error) {
 	}
 	if cfg.Models.RefreshSeconds < 1 {
 		return Config{}, errors.New("models.refresh_seconds must be at least 1")
+	}
+	// Materialize the probe switch so the WebUI and the saved file always show
+	// the effective value instead of an absent field that reads as "off".
+	if cfg.Models.ProbeFreeModels == nil {
+		enabled := true
+		cfg.Models.ProbeFreeModels = &enabled
 	}
 	if cfg.Performance.MaxIdleConns < 1 || cfg.Performance.MaxIdleConnsPerHost < 1 || cfg.Performance.MaxConnsPerHost < 0 || cfg.Performance.IdleConnTimeoutSeconds < 1 || cfg.Performance.ConnectTimeoutSeconds < 1 || cfg.Performance.FailureCooldownSeconds < 1 {
 		return Config{}, errors.New("performance values must be positive (max_conns_per_host may be zero for unlimited)")
@@ -653,6 +674,10 @@ func Clone(cfg Config) Config {
 			aliases[alias] = target
 		}
 		cfg.Models.Aliases = aliases
+	}
+	if cfg.Models.ProbeFreeModels != nil {
+		probe := *cfg.Models.ProbeFreeModels
+		cfg.Models.ProbeFreeModels = &probe
 	}
 	if cfg.Reasoning.EffortByModel != nil {
 		efforts := make(map[string]string, len(cfg.Reasoning.EffortByModel))

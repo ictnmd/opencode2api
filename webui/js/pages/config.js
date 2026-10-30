@@ -67,6 +67,8 @@ function fillConfig(value) {
   $("#c-protocols").value = JSON.stringify(value.models.protocols || {}, null, 2);
   $("#c-aliases").value = JSON.stringify(value.models.aliases || {}, null, 2);
   $("#c-free-only").checked = !!value.models.free_only;
+  // Absent means "on": an older config or an older server keeps probing.
+  $("#c-probe-free").checked = value.models.probe_free_models !== false;
   $("#c-simple-errors").checked = !!value.errors?.simple_body;
   const reasoning = value.reasoning || {};
   $("#c-reasoning-effort").value = reasoning.effort || "";
@@ -114,6 +116,7 @@ async function save(event) {
         protocols: JSON.parse($("#c-protocols").value || "{}"),
         aliases: JSON.parse($("#c-aliases").value || "{}"),
         free_only: $("#c-free-only").checked,
+        probe_free_models: $("#c-probe-free").checked,
       },
       reasoning: {
         effort: $("#c-reasoning-effort").value,

@@ -284,6 +284,8 @@ Chu kỳ là cố định: mô hình đang bật được kiểm tra mỗi **1 g
 
 Trạng thái tồn tại qua các lần khởi động trong `config.json.<upstream-fingerprint>.availability.json`, tách theo URL upstream Zen. Bộ lập lịch nền kiểm tra mô hình đến hạn mỗi phút một lần, bỏ qua mô hình điều khiển thủ công, và dò lần lượt phần còn lại, mỗi làn timeout 60 giây. Không có kênh nào khả dụng nghĩa là không tự động tắt.
 
+Đặt `models.probe_free_models` thành `false` để tắt hoàn toàn việc dò: không request dò nào rời khỏi tiến trình, nên không mô hình nào bị tự động tắt, `reasoning.effort=auto` không có bậc đã xác minh để ép, và trang tính khả dụng ghi rõ bảng sẽ không tự thay đổi. Công tắc mặc định là `true`, có hiệu lực ngay ở lần áp cấu hình kế tiếp (lưu từ WebUI hoặc reload) mà không cần khởi động lại; bật lại thì mọi mô hình đến hạn được dò ngay. Nó độc lập với `models.refresh_seconds`: việc phát hiện mô hình vẫn chạy, vì đó là thứ khiến mô hình được định tuyến. Các mô hình đã bị tắt vẫn ở trạng thái tắt cho tới khi bạn khôi phục hoặc bật lại việc dò.
+
 Các endpoint quản trị (cần đăng nhập; ghi còn cần CSRF): `GET /api/models/availability`, `POST /api/models/restore` với `{"model":"MODEL_ID"}` (khôi phục và chuyển sang điều khiển thủ công), và `POST /api/models/manual` với `{"model":"MODEL_ID","manual":true|false}` để chuyển qua lại giữa điều khiển thủ công và tự động.
 
 ### Session và proxy
@@ -321,6 +323,7 @@ Xem [config.example.json](config.example.json) để có một cấu hình khở
 | `models.refresh_seconds`   | `300`; tối thiểu 1.                                              |
 | `models.protocols`         | `{}`; ghi đè giao thức gốc theo từng mô hình.                   |
 | `models.free_only`         | `false`; chỉ công khai và định tuyến mô hình miễn phí, kể cả khi có key Zen hoặc Go. |
+| `models.probe_free_models` | `true`; `false` tắt việc dò khả dụng mô hình miễn phí ở nền, nên không request dò nào tới upstream. |
 | `models.anonymous_backoff` | Tắt khi vắng mặt; `{threshold, base_hours, max_hours}`, mặc định 6, 1, 24. |
 | `reasoning.effort`         | Rỗng (tắt); `minimal`, `low`, `medium`, `high`, `xhigh`, `max` hoặc `none`. |
 | `reasoning.effort_by_model`| `{}`; ghi đè `reasoning.effort` theo từng mô hình.              |

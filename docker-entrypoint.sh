@@ -246,6 +246,7 @@ overlay_config() {
     apply_json_object O2A_MODEL_ALIASES '.models.aliases' 'models.aliases'
     apply_json_object O2A_MODELS_PROTOCOLS '.models.protocols' 'models.protocols'
     apply_bool O2A_MODELS_FREE_ONLY '.models.free_only' 'models.free_only'
+    apply_bool O2A_MODELS_PROBE_FREE_MODELS '.models.probe_free_models' 'models.probe_free_models'
     # The anonymous lane's circuit breaker is an optional object: any sub-field
     # set here creates it, and the Go side fills the fields left unset.
     apply_int O2A_MODELS_ANONYMOUS_BACKOFF_THRESHOLD '.models.anonymous_backoff.threshold' 'models.anonymous_backoff.threshold'

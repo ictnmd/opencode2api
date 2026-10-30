@@ -380,6 +380,8 @@ Manual control also pauses effort discovery for `reasoning.effort=auto`; learned
 
 State survives restarts in `config.json.<upstream-fingerprint>.availability.json`, separated by the Zen upstream URL. The background scheduler checks for due models once per minute, skips manually controlled models, and probes the rest sequentially, with a 60-second timeout per lane. No channels available means no automatic disable.
 
+Set `models.probe_free_models` to `false` to stop the probe entirely: no probe request leaves the process, so no model is disabled automatically, `reasoning.effort=auto` has no verified ceiling to inject, and the availability page states that its table will not change on its own. The switch defaults to `true`, takes effect on the next applied configuration (WebUI save or reload) without a restart, and turning it back on probes every due model at once. It is independent of `models.refresh_seconds`: catalog discovery keeps running, because that is what makes models routable. Models already disabled stay disabled until you restore them or re-enable probing.
+
 Administration endpoints (login required; writes also require CSRF): `GET /api/models/availability`, `POST /api/models/restore` with `{"model":"MODEL_ID"}` (restores and takes manual control), and `POST /api/models/manual` with `{"model":"MODEL_ID","manual":true|false}` to switch between manual and automatic control.
 
 ### Sessions and proxies
@@ -418,6 +420,7 @@ See [config.example.json](config.example.json) for a complete starting configura
 | `models.protocols`          | `{}`; per-model native protocol overrides.                                  |
 | `models.aliases`            | `{}`; client-facing name → real model ID. Responses echo the client's name. |
 | `models.free_only`          | `false`; expose and route only free models, even with Zen or Go keys.       |
+| `models.probe_free_models`  | `true`; `false` stops the background free-model availability probe, so no probe request reaches the upstream. |
 | `models.anonymous_backoff`  | Absent (off); `{threshold, base_hours, max_hours}`, defaulting to `6`, `1`, `24`. |
 | `reasoning.effort`          | Empty (off); `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `none`. |
 | `reasoning.effort_by_model` | `{}`; per-model overrides of `reasoning.effort`.                            |

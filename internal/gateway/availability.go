@@ -80,6 +80,7 @@ func (m *RuntimeController) startAvailabilityChecksLocked() {
 	}
 	ctx, cancel := context.WithCancel(m.root)
 	m.availabilityCancel = cancel
+	m.availabilitySweep = make(chan struct{}, 1)
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
@@ -88,6 +89,7 @@ func (m *RuntimeController) startAvailabilityChecksLocked() {
 			select {
 			case <-ctx.Done():
 				return
+			case <-m.availabilitySweep:
 			case <-ticker.C:
 			}
 		}
@@ -125,6 +127,30 @@ func (m *RuntimeController) ProbeEnabled() bool {
 	return m.Config().Models.FreeModelProbeEnabled()
 }
 
+// RequestAvailabilitySweep marks every automatic free model due for a probe
+// and wakes the probe loop, so the availability page's refresh re-probes
+// instead of waiting out the minute ticker. A request while a sweep is
+// already queued is a no-op: the queued sweep reads the freshly marked
+// records as it iterates.
+func (m *RuntimeController) RequestAvailabilitySweep() {
+	r := m.current.Load()
+	if r == nil {
+		return
+	}
+	if err := r.availability.ScheduleSweep(); err != nil {
+		m.logger.Warn("model availability sweep could not be scheduled", "error", err)
+	}
+	m.availabilityMu.Lock()
+	defer m.availabilityMu.Unlock()
+	if m.availabilitySweep == nil {
+		return
+	}
+	select {
+	case m.availabilitySweep <- struct{}{}:
+	default:
+	}
+}
+
 // checkFreeModels probes, one at a time, every free model under automatic
 // control whose next check is due. A result is recorded only while the
 // runtime that ran the probe is still current.
@@ -136,6 +162,18 @@ func (m *RuntimeController) checkFreeModels(ctx context.Context) {
 		r := m.current.Load()
 		if r == nil {
 			return
+		}
+		// A WARP probe is a real OpenCode request: an automatic sweep must not
+		// take the last exit and rotate it away on a 429. Wait until the pool
+		// has a spare, and stop the sweep entirely once one probe has retired
+		// an exit, so a burst of probes cannot drain the warm bench.
+		var warpCooling int
+		if r.gateway.warp != nil {
+			snapshot := r.gateway.warp.Snapshot()
+			if snapshot.Active <= 1 {
+				return
+			}
+			warpCooling = snapshot.Cooling
 		}
 		item = r.availability.Get(item.Model)
 		if item.Manual {
@@ -162,5 +200,10 @@ func (m *RuntimeController) checkFreeModels(ctx context.Context) {
 			m.logger.Info("free model availability checked", "component", "models", "event", "availability_checked", "model", item.Model, "available", result.success, "reason", result.reason, "channel", result.channel)
 		}
 		m.updateMu.Unlock()
+		if r.gateway.warp != nil && r.gateway.warp.Snapshot().Cooling > warpCooling {
+			// The probe's 429 retired an exit. Leave the rest of the sweep for
+			// the next tick instead of spending the remaining warm exits.
+			return
+		}
 	}
 }
